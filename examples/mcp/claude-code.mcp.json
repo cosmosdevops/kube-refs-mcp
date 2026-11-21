@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "kube-refs": {
+      "command": "/usr/local/bin/kube-refs-mcp",
+      "args": ["serve", "--workspace-root", "."]
+    }
+  }
+}

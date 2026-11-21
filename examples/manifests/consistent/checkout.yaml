@@ -1,0 +1,111 @@
+# A small application whose parts all fit together.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: checkout-config
+  namespace: shop
+data:
+  LOG_LEVEL: info
+  payment-url: https://payments.example.com
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: checkout-db
+  namespace: shop
+stringData:
+  username: checkout
+  password: change-me
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: checkout
+  namespace: shop
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout
+  namespace: shop
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: checkout
+  template:
+    metadata:
+      labels:
+        app: checkout
+    spec:
+      serviceAccountName: checkout
+      containers:
+        - name: checkout
+          image: registry.example.com/shop/checkout:1.4.2
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: checkout-config
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: checkout-db
+                  key: password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkout
+  namespace: shop
+spec:
+  selector:
+    app: checkout
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: checkout
+  namespace: shop
+spec:
+  rules:
+    - host: shop.example.com
+      http:
+        paths:
+          - path: /checkout
+            pathType: Prefix
+            backend:
+              service:
+                name: checkout
+                port:
+                  number: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: checkout
+  namespace: shop
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: checkout
+  minReplicas: 2
+  maxReplicas: 6
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: checkout
+  namespace: shop
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: checkout

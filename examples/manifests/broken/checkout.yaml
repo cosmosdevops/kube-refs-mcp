@@ -1,0 +1,95 @@
+# Every resource here is valid on its own. Together they do not work.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: checkout-config
+  namespace: shop
+data:
+  LOG_LEVEL: info
+  payment-url: https://payments.example.com
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: checkout-db
+  namespace: shop
+stringData:
+  username: checkout
+  password: change-me
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout
+  namespace: shop
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: checkout
+  template:
+    metadata:
+      labels:
+        app: checkout
+    spec:
+      containers:
+        - name: checkout
+          image: registry.example.com/shop/checkout:1.4.2
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PAYMENT_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: checkout-config
+                  key: payment_url        # the key is payment-url
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: checkout-db
+                  key: password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkout
+  namespace: shop
+spec:
+  selector:
+    app: checkuot                         # typo: matches no pods
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: checkout
+  namespace: shop
+spec:
+  rules:
+    - host: shop.example.com
+      http:
+        paths:
+          - path: /checkout
+            pathType: Prefix
+            backend:
+              service:
+                name: checkout
+                port:
+                  number: 8080            # the Service exposes 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: checkout
+  namespace: shop
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: checkout-api                    # the Deployment is named checkout
+  minReplicas: 2
+  maxReplicas: 6

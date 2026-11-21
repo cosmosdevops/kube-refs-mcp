@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "kube-refs": {
+      "type": "stdio",
+      "command": "/usr/local/bin/kube-refs-mcp",
+      "args": ["serve", "--workspace-root", "/absolute/path/to/your/project"]
+    }
+  }
+}

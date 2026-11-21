@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Run gofmt on:"; echo "$unformatted"; exit 1
+          fi
+      - name: go.mod is tidy
+        run: go mod tidy -diff
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
+      - name: Build
+        run: CGO_ENABLED=0 go build -trimpath -o /tmp/kube-refs-mcp ./cmd/kube-refs-mcp && /tmp/kube-refs-mcp version
+
+  image:
+    name: Container image
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the tags, to work out the version
+      - name: Work out the version
+        # A tag build is that version (v1.2.3 -> 1.2.3). Anything else is
+        # named after the last tag, e.g. 1.2.3-4-gabc1234.
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version=${GITHUB_REF_NAME#v}
+          else
+            version=$(git describe --tags --always)
+            version=${version#v}
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "Building version $version"
+      - name: Build
+        run: docker build --build-arg "VERSION=$VERSION" -t "$IMAGE:build" .
+      - name: Check the image runs
+        run: |
+          reported=$(docker run --rm "$IMAGE:build" version)
+          echo "The image reports version $reported"
+          [ "$reported" = "$VERSION" ]
+          # The keys line must come out on stdout alone, never the key.
+          line=$(docker run --rm "$IMAGE:build" new-key ci 2>/dev/null)
+          echo "$line" | grep -Eq '^ci [0-9a-f]{64}$'
+          # It checks a bundle: a Service that selects nothing is not a pass.
+          status=0
+          printf 'apiVersion: v1\nkind: Service\nmetadata: {name: s}\nspec: {selector: {app: x}, ports: [{port: 80}]}\n' \
+            | docker run --rm -i "$IMAGE:build" check -f - --complete || status=$?
+          [ "$status" = 1 ]
+          # The image carries this project's licence and notice, and the
+          # licences of the modules built into the binary. It has no shell,
+          # so list its files from outside.
+          files=$(docker export "$(docker create "$IMAGE:build")" | tar -t)
+          echo "$files" | grep -qx 'licenses/LICENSE'
+          echo "$files" | grep -qx 'licenses/NOTICE'
+          echo "$files" | grep -qx 'licenses/MODULES.txt'
+          echo "$files" | grep -qx 'licenses/go/LICENSE'
+          echo "$files" | grep -q '^licenses/github.com/modelcontextprotocol/go-sdk/LICENSE'
+          echo "$files" | grep -q '^licenses/k8s.io/apimachinery/LICENSE'
+      # Pull requests only build. Pushes to main publish :latest and the
+      # commit; version tags (v1.2.3) publish that version too.
+      - name: Publish
+        if: github.event_name == 'push'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          tags=("sha-${GITHUB_SHA::7}")
+          if [ "$GITHUB_REF" = refs/heads/main ]; then tags+=(latest); fi
+          if [ "$GITHUB_REF_TYPE" = tag ]; then tags+=("${GITHUB_REF_NAME#v}"); fi
+          for tag in "${tags[@]}"; do
+            docker tag "$IMAGE:build" "$IMAGE:$tag"
+            docker push "$IMAGE:$tag"
+          done

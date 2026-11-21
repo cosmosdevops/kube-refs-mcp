@@ -1,0 +1,28 @@
+# Nothing here is wrong, but two of the objects it needs are not in the
+# bundle: the Secret and the claim. They may already exist in the cluster.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: shop
+spec:
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      imagePullSecrets:
+        - name: registry-credentials
+      containers:
+        - name: worker
+          image: registry.example.com/shop/worker:2.0.1
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: worker-data

@@ -1,0 +1,13 @@
+kube-refs-mcp
+Copyright 2026 cosmosdevops
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file.
+
+This project is not affiliated with or endorsed by the Kubernetes project,
+the Cloud Native Computing Foundation, The Linux Foundation or Red Hat.
+Kubernetes is a trademark of The Linux Foundation. OpenShift is a trademark
+of Red Hat, Inc.
+
+The program is built from other open source modules. Their licences and
+notices are in the /licenses directory of the container image. To produce
+the same set for a binary you built yourself, run "make licenses".

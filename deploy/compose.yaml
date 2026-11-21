@@ -1,0 +1,34 @@
+# Run kube-refs-mcp as a hosted MCP server.
+#
+#   docker compose -f deploy/compose.yaml up -d
+#
+# It listens on localhost only. Apache passes /mcp on to it; see
+# kube-refs-mcp-apache.conf.
+services:
+  kube-refs-mcp:
+    image: ghcr.io/cosmosdevops/kube-refs-mcp:latest
+    # Or build from a checkout of this repo instead of pulling:
+    # build: ..
+    command:
+      - serve
+      - --http=0.0.0.0:8089
+      - --keys=/config/keys
+    ports:
+      - "127.0.0.1:8089:8089"
+    volumes:
+      # The directory holding the keys file, /etc/kube-refs-mcp/keys.
+      #
+      # Mount the directory, not the files: editors replace a file when
+      # saving, and a mounted file would keep pointing at the old one.
+      - /etc/kube-refs-mcp:/config:ro
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "/kube-refs-mcp", "check-health", "http://127.0.0.1:8089/healthz"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 5s

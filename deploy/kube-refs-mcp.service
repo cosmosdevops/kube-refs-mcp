@@ -1,0 +1,24 @@
+[Unit]
+Description=Kubernetes reference checking MCP server
+After=network.target
+
+[Service]
+# Reads the API keys from a file only root and this service can read. It is
+# given no workspace root, so callers send their manifests inline and the
+# server reads no other files.
+ExecStart=/usr/local/bin/kube-refs-mcp serve \
+    --http 127.0.0.1:8089 \
+    --keys /etc/kube-refs-mcp/keys
+Restart=on-failure
+User=kube-refs-mcp
+Group=kube-refs-mcp
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

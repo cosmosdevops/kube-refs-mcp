@@ -1,0 +1,9 @@
+# Only the Go sources and the licence files go into the build.
+*
+!LICENSE
+!NOTICE
+!go.mod
+!go.sum
+!cmd
+!internal
+**/*_test.go
