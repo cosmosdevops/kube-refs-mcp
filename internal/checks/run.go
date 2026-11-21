@@ -344,7 +344,7 @@ func (c *run) resolve(r nameRef) (target *object, l links.Link) {
 	}
 	sort.Strings(sameNS)
 	sort.Strings(elsewhere)
-	l.Expected = fmt.Sprintf("a %s named %q%s", r.kind.Kind, r.name, where)
+	l.Expected = fmt.Sprintf("%s %s named %q%s", article(r.kind.Kind), r.kind.Kind, r.name, where)
 	l.Found = fmt.Sprintf("no %s with that name%s in the bundle", r.kind.Kind, where)
 	for _, n := range limit(sameNS, 20) {
 		l.Candidates = append(l.Candidates, r.kind.Kind+" "+n+where)

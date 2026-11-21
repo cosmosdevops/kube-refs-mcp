@@ -483,7 +483,9 @@ func TestRoute(t *testing.T) {
 		"port name":       {"web", "  port: {targetPort: http}\n", links.StatusOK, ""},
 		"pod port number": {"web", "  port: {targetPort: 8080}\n", links.StatusOK, ""},
 		"wrong name":      {"web", "  port: {targetPort: web}\n", links.StatusBroken, links.ReasonPortMissing},
-		"service port":    {"web", "  port: {targetPort: 80}\n", links.StatusBroken, links.ReasonPortMissing},
+		// A number that does not match is not called broken: the rule for
+		// numbers has not been checked against a running router.
+		"service port":    {"web", "  port: {targetPort: 80}\n", links.StatusUnresolved, links.ReasonPortNotDeclared},
 		"missing service": {"nope", "  port: {targetPort: http}\n", links.StatusUnresolved, links.ReasonNotInBundle},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -785,4 +787,69 @@ func TestFailuresAreNeverHidden(t *testing.T) {
 		}
 	}()
 	c.add(links.Link{Check: "no-such-check", Status: links.StatusOK})
+}
+
+// A hint must point at the likeliest slip, and must not be offered when
+// nothing is close.
+func TestClosestMatchPicksTheLikelySlip(t *testing.T) {
+	// Swapped letters are one edit, so "wbe" is nearer to "web" than to "db".
+	for _, tc := range []struct {
+		a, b string
+		want int
+	}{{"wbe", "web", 1}, {"web", "db", 2}, {"checkuot", "checkout", 1}, {"htpp", "http", 1}, {"same", "same", 0}, {"", "ab", 2}} {
+		if got := distance(tc.a, tc.b); got != tc.want {
+			t.Errorf("distance(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
+		}
+	}
+	// A short name gets little slack: "db" is not a typo of "web".
+	if n, ok := nearest("web", []string{"db"}); ok {
+		t.Errorf("nearest(web, [db]) = %q, want none", n)
+	}
+	if n, ok := nearest("wbe", []string{"db", "web"}); !ok || n != "web" {
+		t.Errorf("nearest(wbe, [db web]) = %q, %v", n, ok)
+	}
+	if n, ok := nearest("payment_url", []string{"payment-url", "timeout"}); !ok || n != "payment-url" {
+		t.Errorf("nearest(payment_url) = %q, %v", n, ok)
+	}
+
+	// A selector with a typo names the workload it meant, not the one that
+	// sorts first.
+	bundle := deployment("web", "", "{app: web}", "", "") + deployment("db", "", "{app: db}", "", "") +
+		service("front", "", "{app: wbe}", "[{port: 80}]")
+	l := one(t, check(t, bundle), "service-selector")
+	expect(t, l, links.StatusUnresolved, links.ReasonNotInBundle)
+	if !strings.Contains(l.ClosestMatch, "Deployment/web") {
+		t.Errorf("closest match = %q, want the Deployment with app=web", l.ClosestMatch)
+	}
+
+	// An autoscaler that names the wrong kind is told so, even when another
+	// workload of the kind it asked for exists.
+	hpa := "\n---\napiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata: {name: h}\nspec:\n  scaleTargetRef: {apiVersion: apps/v1, kind: StatefulSet, name: web}\n"
+	statefulSet := "\n---\napiVersion: apps/v1\nkind: StatefulSet\nmetadata: {name: db}\nspec:\n  selector: {matchLabels: {app: db}}\n  template:\n    metadata: {labels: {app: db}}\n    spec: {containers: [{name: c, image: x}]}\n"
+	l = one(t, check(t, deployment("web", "", "{app: web}", "", "")+statefulSet+hpa), "hpa-target")
+	expect(t, l, links.StatusUnresolved, links.ReasonNotInBundle)
+	if !strings.Contains(l.ClosestMatch, "Deployment/web") || strings.Contains(l.ClosestMatch, "db") {
+		t.Errorf("closest match = %q, want the Deployment named web", l.ClosestMatch)
+	}
+
+	// Messages use the right article.
+	if article("Ingress") != "an" || article("Service") != "a" {
+		t.Error("article is wrong")
+	}
+}
+
+// An optional key that is absent never stops the pod, so it is skipped
+// whether the object has other keys or none at all.
+func TestOptionalKeyOfAnEmptyObject(t *testing.T) {
+	pod := func(optional string) string {
+		return "apiVersion: v1\nkind: Pod\nmetadata: {name: p}\nspec:\n  containers:\n    - name: c\n      image: x\n      env:\n        - name: A\n          valueFrom: {secretKeyRef: {name: s, key: k" + optional + "}}\n"
+	}
+	empty := "\n---\napiVersion: v1\nkind: Secret\nmetadata: {name: s}\n"
+	other := "\n---\napiVersion: v1\nkind: Secret\nmetadata: {name: s}\nstringData: {another: x}\n"
+
+	expect(t, one(t, check(t, pod(", optional: true")+empty), "secret"), links.StatusSkipped, links.ReasonOptional)
+	expect(t, one(t, check(t, pod(", optional: true")+other), "secret"), links.StatusSkipped, links.ReasonOptional)
+	// Without the flag the two cases still differ.
+	expect(t, one(t, check(t, pod("")+empty), "secret"), links.StatusUnresolved, links.ReasonDetailsUnknown)
+	expect(t, one(t, check(t, pod("")+other), "secret"), links.StatusBroken, links.ReasonKeyMissing)
 }

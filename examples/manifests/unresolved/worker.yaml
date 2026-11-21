@@ -1,5 +1,10 @@
 # Nothing here is wrong, but two of the objects it needs are not in the
 # bundle: the Secret and the claim. They may already exist in the cluster.
+#
+#   kube-refs-mcp check --dir examples/manifests/unresolved
+#       unresolved, exit code 2
+#   kube-refs-mcp check --dir examples/manifests/unresolved --cluster-objects examples/cluster-objects/worker.yaml
+#       consistent, exit code 0
 apiVersion: apps/v1
 kind: Deployment
 metadata:

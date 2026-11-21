@@ -1,0 +1,18 @@
+# The objects examples/manifests/unresolved/worker.yaml needs that already
+# exist in the cluster. Pass this file with --cluster-objects, or its
+# contents as clusterObjects.
+#
+# It is kept out of examples/manifests on purpose. A file in the same
+# directory as the bundle would be read as part of the bundle.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry-credentials
+  namespace: shop
+type: kubernetes.io/dockerconfigjson
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: worker-data
+  namespace: shop

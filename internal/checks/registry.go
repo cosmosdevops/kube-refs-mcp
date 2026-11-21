@@ -44,7 +44,7 @@ var registry = []Check{
 	{"ingress-tls", "An Ingress's TLS Secret exists.", []string{"Ingress"},
 		"Unresolved when the Secret is not in the bundle."},
 	{"route-backend", "A Route's Service exists and has the port.", []string{"Route"},
-		"Broken when the Service is in the bundle without the port. Unresolved when the Service is not in the bundle."},
+		"Broken when the Service is in the bundle without the named port. Unresolved when a port number does not match, or the Service is not in the bundle."},
 	{"hpa-target", "The workload a HorizontalPodAutoscaler scales exists.", []string{"HorizontalPodAutoscaler"},
 		"Unresolved when the workload is not in the bundle."},
 	{"pdb-selector", "A PodDisruptionBudget's selector matches the pod template of a workload.", []string{"PodDisruptionBudget"},

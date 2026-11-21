@@ -105,9 +105,12 @@ func limit(items []string, max int) []string {
 	return append(append([]string(nil), items[:max]...), fmt.Sprintf("... and %d more", len(items)-max))
 }
 
-// distance is the edit distance between two strings.
+// distance is the edit distance between two strings. Swapping two
+// neighbouring letters counts as one edit, because that is the most common
+// typing slip: "wbe" is one edit from "web", not two.
 func distance(a, b string) int {
 	ra, rb := []rune(a), []rune(b)
+	var before []int
 	prev := make([]int, len(rb)+1)
 	for j := range prev {
 		prev[j] = j
@@ -121,15 +124,25 @@ func distance(a, b string) int {
 				cost = 0
 			}
 			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+			if i > 1 && j > 1 && ra[i-1] == rb[j-2] && ra[i-2] == rb[j-1] {
+				cur[j] = min(cur[j], before[j-2]+1)
+			}
 		}
-		prev = cur
+		before, prev = prev, cur
 	}
 	return prev[len(rb)]
 }
 
+// slack is how many edits still count as a likely slip for a name of this
+// length: one for a short name, more for a long one. A short name gets
+// little slack on purpose. Two edits turn "web" into "db", which is a
+// different name, not a typo.
+func slack(want string) int {
+	return max(1, len([]rune(want))/3)
+}
+
 // nearest returns the candidate closest to want, if one is close enough to
-// be a likely slip: at most two edits for short names, a third of the
-// length for long ones.
+// be a likely slip.
 func nearest(want string, candidates []string) (string, bool) {
 	best, bestDist := "", -1
 	for _, c := range candidates {
@@ -138,9 +151,18 @@ func nearest(want string, candidates []string) (string, bool) {
 			best, bestDist = c, d
 		}
 	}
-	if bestDist < 0 || bestDist > max(2, len(want)/3) {
+	if bestDist < 0 || bestDist > slack(want) {
 		return "", false
 	}
 	return best, true
 }
+
+// article returns "a" or "an" for the word that follows.
+func article(word string) string {
+	if word != "" && strings.ContainsRune("AEIOUaeiou", rune(word[0])) {
+		return "an"
+	}
+	return "a"
+}
+
 func joinList(items []string) string { return strings.Join(items, ", ") }

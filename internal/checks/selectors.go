@@ -148,16 +148,19 @@ func closestTemplate(sel labels.Selector, templates []*podTemplate) (*podTemplat
 		var diffs []string
 		for _, r := range reqs {
 			if r.Matches(labels.Set(t.labels)) {
-				score += 3
+				score += 6
 				continue
 			}
 			want := wanted(r)
 			have, has := t.labels[r.Key()]
 			switch {
 			case has:
+				// The nearer the value, the likelier it is the one meant.
 				score++
-				if want != "" && distance(want, have) <= 2 {
-					score++
+				if want != "" {
+					if d := distance(want, have); d <= slack(want) {
+						score += 4 - min(d, 3)
+					}
 				}
 				diffs = append(diffs, fmt.Sprintf("it has %s=%s where the selector wants %s", r.Key(), have, r.String()))
 			case want != "" && hasValue(t.labels, want):

@@ -34,7 +34,12 @@ The same rule decides the smaller cases. A numeric `targetPort` that the
 pods do not list may still work, so it is not broken. An empty ConfigMap
 may be filled in by the cluster, so a key of it is not broken. A name found
 in another namespace may also exist in the right one, so that is not broken
-either.
+either. A rule that has only been read about, not tested, is not grounds for
+broken: that is why a Route's port number that does not match is unresolved.
+
+Hints follow the same care. `closestMatch` is only offered when something is
+close enough to be a likely slip. A short name gets little slack: "db" is
+not suggested for "web".
 
 ## Layout
 

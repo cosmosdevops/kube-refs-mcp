@@ -234,6 +234,17 @@ func (c *run) keyLink(o, target *object, field, key string, optional bool) links
 			return l
 		}
 	}
+	// An optional key that is absent never stops the pod, whether the
+	// object has other keys or none.
+	if optional {
+		l.Status, l.Reason = links.StatusSkipped, links.ReasonOptional
+		l.Found = "keys: " + joinList(limit(keys, 30))
+		if len(keys) == 0 {
+			l.Found = "no keys at all"
+		}
+		l.Message = fmt.Sprintf("%s uses key %q of %s, which does not have it. The reference is marked optional, so the pod starts without it.", o.ref, key, target.ref)
+		return l
+	}
 	// An object with no keys at all is usually a placeholder that something
 	// in the cluster fills in, such as a CA bundle injector.
 	if len(keys) == 0 {
@@ -244,11 +255,6 @@ func (c *run) keyLink(o, target *object, field, key string, optional bool) links
 		return l
 	}
 	l.Found = "keys: " + joinList(limit(keys, 30))
-	if optional {
-		l.Status, l.Reason = links.StatusSkipped, links.ReasonOptional
-		l.Message = fmt.Sprintf("%s uses key %q of %s, which does not have it. The reference is marked optional, so the pod starts without it.", o.ref, key, target.ref)
-		return l
-	}
 	l.Status, l.Reason = links.StatusBroken, links.ReasonKeyMissing
 	l.Message = fmt.Sprintf("%s uses key %q of %s, which does not have that key. The pod will not start.", o.ref, key, target.ref)
 	l.Fix = fmt.Sprintf("Use a key the %s has, or add %q to it.", kind, key)

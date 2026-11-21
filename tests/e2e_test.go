@@ -525,7 +525,7 @@ func TestCLI(t *testing.T) {
 		{"broken", []string{"check", "--dir", "examples/manifests/broken"}, 1, "closest match: key payment-url"},
 		{"unresolved", []string{"check", "-f", "examples/manifests/unresolved/worker.yaml"}, 2, "Verdict:   UNKNOWN"},
 		{"complete", []string{"check", "-f", "examples/manifests/unresolved/worker.yaml", "--complete"}, 1, "The bundle was said to be complete"},
-		{"cluster objects", []string{"check", "-f", "examples/manifests/unresolved/worker.yaml", "--cluster-objects", "examples/manifests/unresolved/cluster-objects.yaml", "--complete"}, 0, "Verdict:   PASS"},
+		{"cluster objects", []string{"check", "-f", "examples/manifests/unresolved/worker.yaml", "--cluster-objects", "examples/cluster-objects/worker.yaml", "--complete"}, 0, "Verdict:   PASS"},
 		{"links", []string{"links", "--dir", "examples/manifests/broken"}, 0, "BROKEN      ingress-backend"},
 		{"skip checks", []string{"check", "--dir", "examples/manifests/broken", "--skip-check", "configmap", "--skip-check", "ingress-*"}, 2, "3 check(s) were turned off"},
 		{"one check", []string{"check", "--dir", "examples/manifests/broken", "--check", "workload-selector"}, 0, "Verdict:   PASS"},

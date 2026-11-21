@@ -2,6 +2,7 @@ package checks
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/cosmosdevops/kube-refs-mcp/internal/links"
 )
@@ -56,7 +57,7 @@ type backend struct {
 // checkBackend checks that the Service exists and exposes the port.
 func (c *run) checkBackend(o *object, b backend) {
 	svc, l := c.resolve(nameRef{check: b.check, from: o, field: b.field, kind: kindService, ns: o.ns, name: b.name,
-		why: fmt.Sprintf("a %s can only send to a Service in its own namespace", o.gk.Kind)})
+		why: fmt.Sprintf("%s %s can only send to a Service in its own namespace", article(o.gk.Kind), o.gk.Kind)})
 	if svc == nil || b.port == "" {
 		l.To.Port = b.port
 		c.add(l)
@@ -177,11 +178,23 @@ func (c *run) checkRoute(o *object) {
 			// that names its target port hides that number.
 			l.Status, l.Reason = links.StatusSkipped, links.ReasonDetailsUnknown
 			l.Message = fmt.Sprintf("%s sends to pod port %s through %s, which names its target ports. The numbers behind those names are on the pods, so this was not compared.", o.ref, port, svc.ref)
-		default:
-			l.Status, l.Reason = links.StatusBroken, links.ReasonPortMissing
-			l.Message = fmt.Sprintf("%s sends to port %s of %s, which has no port with that name and no target port with that number. The router would find no endpoints.", o.ref, port, svc.ref)
+		case portIsNum:
+			// How the router treats a number is taken from its documentation
+			// and has not been tested against a running router. That is not
+			// enough to call the link broken.
+			l.Status, l.Reason = links.StatusUnresolved, links.ReasonPortNotDeclared
+			l.Message = fmt.Sprintf("%s sends to pod port %s through %s, which has no target port with that number. The router is expected to find no endpoints, but this rule has not been checked against a running router.", o.ref, port, svc.ref)
 			l.Fix = "Set spec.port.targetPort to the name of a Service port, or to the Service's target port number."
 			if len(sp.description) > 0 {
+				l.ClosestMatch = fmt.Sprintf("%s exposes %s", svc.ref, joinList(sp.description))
+			}
+		default:
+			l.Status, l.Reason = links.StatusBroken, links.ReasonPortMissing
+			l.Message = fmt.Sprintf("%s sends to the port named %q of %s, which has no port with that name. The router would find no endpoints.", o.ref, port, svc.ref)
+			l.Fix = "Set spec.port.targetPort to the name of a Service port, or to the Service's target port number."
+			if n, ok := nearest(port, sortedKeys(sp.names)); ok {
+				l.ClosestMatch = fmt.Sprintf("port %s of %s", n, svc.ref)
+			} else if len(sp.description) > 0 {
 				l.ClosestMatch = fmt.Sprintf("%s exposes %s", svc.ref, joinList(sp.description))
 			}
 		}
@@ -204,13 +217,22 @@ func (c *run) checkHPA(o *object) {
 	target := gk{groupOf(getString(ref, "apiVersion")), kind}
 	_, l := c.resolve(nameRef{check: "hpa-target", from: o, field: "spec.scaleTargetRef.name", kind: target, ns: o.ns, name: name,
 		why: "an autoscaler can only scale a workload in its own namespace"})
-	if l.Status == links.StatusUnresolved && l.ClosestMatch == "" {
-		// The same name under another kind is a likely slip.
+	if l.Status == links.StatusUnresolved {
+		// The same name under another kind is the likeliest slip, so it
+		// replaces a hint that only found a similar name. Kinds are tried in
+		// a fixed order, so the hint does not change from run to run.
+		var others []gk
 		for other, byNS := range c.byName {
 			if t := byNS[o.ns][name]; t != nil && other != target && len(templatesOf(t)) > 0 {
-				l.ClosestMatch = fmt.Sprintf("%s (apiVersion %s) has that name, but the autoscaler asks for kind %s in %q", t.ref, t.res.APIVersion(), kind, getString(ref, "apiVersion"))
-				break
+				others = append(others, other)
 			}
+		}
+		sort.Slice(others, func(i, j int) bool {
+			return others[i].Group+"/"+others[i].Kind < others[j].Group+"/"+others[j].Kind
+		})
+		if len(others) > 0 {
+			t := c.byName[others[0]][o.ns][name]
+			l.ClosestMatch = fmt.Sprintf("%s (apiVersion %s) has that name, but the autoscaler asks for kind %s in %q", t.ref, t.res.APIVersion(), kind, getString(ref, "apiVersion"))
 		}
 	}
 	c.add(l)

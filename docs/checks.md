@@ -18,7 +18,7 @@ checks` and the `list_checks` tool print the same list.
 | `statefulset-service` | The Service a StatefulSet names in spec.serviceName exists. | Unresolved when the Service is not in the bundle. |
 | `ingress-backend` | An Ingress backend's Service exists and exposes the port. | Broken when the Service is in the bundle without the port. Unresolved when the Service is not in the bundle. |
 | `ingress-tls` | An Ingress's TLS Secret exists. | Unresolved when the Secret is not in the bundle. |
-| `route-backend` | A Route's Service exists and has the port. | Broken when the Service is in the bundle without the port. Unresolved when the Service is not in the bundle. |
+| `route-backend` | A Route's Service exists and has the port. | Broken when the Service is in the bundle without the named port. Unresolved when a port number does not match, or the Service is not in the bundle. |
 | `hpa-target` | The workload a HorizontalPodAutoscaler scales exists. | Unresolved when the workload is not in the bundle. |
 | `pdb-selector` | A PodDisruptionBudget's selector matches the pod template of a workload. | Unresolved when it matches nothing. |
 | `networkpolicy-selector` | A NetworkPolicy's pod selector matches the pod template of a workload. | Unresolved when it matches nothing. |
@@ -128,24 +128,33 @@ A reference marked `optional: true` whose target or key is missing is
 | `ingress-tls` | Ingress `spec.tls[].secretName` |
 | `route-backend` | Route `spec.to`, `spec.alternateBackends[]` and `spec.port.targetPort` |
 
-A Service that is not in the bundle is `unresolved`. A Service that is in
-the bundle but does not have the port is `broken`.
+A Service that is not in the bundle is `unresolved`.
 
-An Ingress port is a Service port, by number or by name.
+An Ingress port is a Service port, by number or by name. A Service that is
+in the bundle but does not have the port is `broken`.
 
 A Route's `port.targetPort` is different. The OpenShift router compares it
 with the Service's endpoints: a name is a Service port name, and a number is
-the port on the pods, which is the Service's `targetPort`. A number is
-`skipped` when the Service names its target ports, because the number behind
-the name is on the pods. This rule is taken from how the router is
-documented to behave. It has not been tested against a running router.
+the port on the pods, which is the Service's `targetPort`.
+
+| Route `targetPort` | Service | Result |
+| --- | --- | --- |
+| A name | Has a port with that name | `ok` |
+| A name | Has no port with that name | `broken` |
+| A number | Has that number as a target port | `ok` |
+| A number | Has other numbers as target ports | `unresolved`, reason `port_not_declared` |
+| A number | Names its target ports | `skipped`. The number behind the name is on the pods. |
+
+A number that does not match is not called `broken`. The rule for numbers is
+taken from how the router is documented to behave, and it has not been
+tested against a running router. That is not certain enough for `broken`.
 
 ## Autoscaler
 
 `hpa-target` looks up HorizontalPodAutoscaler `spec.scaleTargetRef` by API
 group, kind and name. The target may be any kind, including a custom one.
 If a workload with the same name but another kind is in the bundle, the
-finding says so.
+finding says so. That hint comes before one that only found a similar name.
 
 ## Role bindings
 
