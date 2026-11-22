@@ -87,6 +87,19 @@ jobs:
           echo "$files" | grep -qx 'licenses/go/LICENSE'
           echo "$files" | grep -q '^licenses/github.com/modelcontextprotocol/go-sdk/LICENSE'
           echo "$files" | grep -q '^licenses/k8s.io/apimachinery/LICENSE'
+          # The rule library is in the image: every file in rules/ is at
+          # /rules, and the image can load the lot.
+          for rule in rules/*.yaml; do
+            echo "$files" | grep -qx "$rule" || { echo "::error::$rule is not in the image"; exit 1; }
+          done
+          docker run --rm "$IMAGE:build" checks --rules /rules | grep -q 'rule from: /rules/gateway-api.yaml'
+          # A rule from the image is applied: the example asks for a port
+          # the Service does not expose, which only the rule can see.
+          status=0
+          out=$(docker run --rm -i "$IMAGE:build" check --rules /rules/gateway-api.yaml -f - < examples/rules/gateway.yaml) || status=$?
+          echo "$out"
+          [ "$status" = 1 ]
+          echo "$out" | grep -q 'BROKEN      httproute-backend'
       # Pull requests only build. Pushes to main publish :latest and the
       # commit; version tags (v1.2.3) publish that version too.
       - name: Publish
