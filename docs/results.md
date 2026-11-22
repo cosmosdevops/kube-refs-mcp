@@ -57,14 +57,14 @@ down here to two findings.
 | Field | Meaning |
 | --- | --- |
 | `status` | `fail` if any link is broken. Otherwise `unknown` if the report is not complete. Otherwise `pass`. |
-| `complete` | `false` if any link is unresolved or errored. |
+| `complete` | `false` if any link is unresolved or errored, or if a file could not be read. |
 | `consistent` | `true` only when nothing is broken and the report is complete. |
 | `bundleComplete` | Repeats the option the caller set. |
 | `checksRun` | The checks that ran. |
 | `checksSkipped` | The checks that were turned off. Left out when there are none. |
 | `summary` | Counts of every link, including the ones not listed. |
 | `findings` | Links that are `broken`, `unresolved` or `error`. With `includeAll`, every link. |
-| `skippedFiles` | Files that were found but are not Kubernetes manifests. |
+| `skippedFiles` | Files, or documents in a file, that were found but not checked. See [Skipped files](#skipped-files). |
 | `notes` | Assumptions that applied, such as how resources with no namespace were treated. |
 
 A finding has:
@@ -91,14 +91,14 @@ A finding has:
 | `port_not_declared` | `unresolved` or `skipped` | The pods do not list the port, and that is not certain to be a mistake. |
 | `details_unknown` | `unresolved` or `skipped` | The target is known, but not its keys or ports. |
 | `key_missing` | `broken` | The ConfigMap or Secret does not have the key. |
-| `port_missing` | `broken` | The target does not have the port. |
+| `port_missing` | `broken` | The target does not have the port. For a named Service target port, only with `bundleComplete`. |
 | `selector_mismatch` | `broken` | A workload's selector does not match its own pod template. |
 | `wrong_kind` | `broken` | The reference names a kind that cannot be used there. |
 | `optional` | `skipped` | The reference is marked optional and the target is absent. |
 | `cluster_provided` | `skipped` | The cluster creates the target itself. |
 | `runtime_labels` | `skipped` | The selector uses a label only running pods have. |
 | `not_applicable` | `skipped` | There is nothing to check. |
-| `invalid` | `skipped` | The reference is not well-formed. A schema check reports it. |
+| `invalid` | `unresolved` | The reference is not well-formed, or far longer than Kubernetes allows, so it could not be followed. |
 | `check_failed` | `error` | The check stopped with an internal error. |
 
 ## Options
@@ -181,8 +181,9 @@ Ingress/shop/checkout
 | `candidates` | What does exist where the target was looked for: names, keys, ports, or pod template labels. |
 | `fix` | What to change. |
 
-The server keeps the last 50 checks of a session for this. Over HTTP, each
-API key holder has their own history.
+The server keeps the links of the last 50 checks of a session for this, or
+fewer when the checks are large. It does not keep the manifests. Over HTTP,
+each API key holder has their own history.
 
 ## Exit codes
 
@@ -205,5 +206,39 @@ bundle cannot be read.
 | `--max-files` | 2000 | Manifest files under one directory |
 | `--timeout` | 30s | One check |
 
+Some limits are fixed:
+
+| Limit | Value |
+| --- | --- |
+| A resource's name, namespace, kind or `apiVersion`, and any field name | 512 characters |
+| References followed in one check | 20000 |
+| A YAML document once its aliases are written out | `--max-manifest-bytes` |
+
+Kubernetes allows at most 253 characters for a name, so the first limit
+does not get in the way of a real manifest.
+
 A request over a limit is refused with an error. It is never cut short and
-reported as a pass.
+reported as a pass. In a directory check, a file over a limit is listed as
+not read, and the report is then not complete.
+
+A reference inside a resource that is far longer than Kubernetes allows is
+not followed. It is `unresolved` with reason `invalid`.
+
+## Skipped files
+
+A directory check lists what it found but did not check under
+`skippedFiles`. Each entry has a `path` and a `reason`.
+
+| Case | `notRead` | Effect |
+| --- | --- | --- |
+| A file with no Kubernetes resource, such as a Helm values file | no | None. |
+| A document that is not a resource, in a file with others, such as a Kustomization | no | None. The other documents in the file are checked. |
+| A file that is not valid YAML or JSON, such as a Helm template | `true` | The report is not complete. |
+| A file over a limit | `true` | The report is not complete. |
+| A symbolic link | `true` | The report is not complete. Links are never followed. |
+
+What a file that was not read holds is unknown, so the tool does not report
+a pass over it. The command line marks these files `NOT READ`.
+
+A file named directly, with `files` or `--file`, is different. It must be
+a manifest all the way through, or the request is refused.

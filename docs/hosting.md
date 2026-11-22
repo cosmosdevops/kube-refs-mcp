@@ -13,8 +13,8 @@ Serve it over HTTPS only, because the key travels in a header on every
 request. Listen on `127.0.0.1` and put a reverse proxy with TLS in front.
 
 Keep in mind what hosting means: callers' manifests are sent to your server.
-They are held in memory, never written or logged, but they do pass through
-it and any proxy in front of it. Manifests can contain secrets. For anything
+They are held in memory for the length of the call, never written or
+logged, but they do pass through it and any proxy in front of it. Manifests can contain secrets. For anything
 sensitive, run the server locally over stdio instead.
 
 ## API keys
@@ -48,6 +48,7 @@ Each key may make 60 requests a minute, with a burst of 30. Change this with
 | --- | --- |
 | `401` | No key, or a key that is not in the file. |
 | `429` | Over the limit. `Retry-After` says how long to wait. |
+| `400` | A batch of calls in one request. Send one call per request, so that each one counts against the limit. |
 
 ## Connecting an agent
 

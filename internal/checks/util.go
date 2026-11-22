@@ -141,11 +141,33 @@ func slack(want string) int {
 	return max(1, len([]rune(want))/3)
 }
 
+// maxCompare bounds the names that are compared for a hint. Comparing two
+// names takes time in proportion to both lengths multiplied together, and
+// no valid Kubernetes name is longer than this.
+const maxCompare = 320
+
+// clip shortens text for display.
+func clip(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return strings.ToValidUTF8(s[:max], "") + "..."
+}
+
 // nearest returns the candidate closest to want, if one is close enough to
 // be a likely slip.
 func nearest(want string, candidates []string) (string, bool) {
+	if len(want) > maxCompare {
+		return "", false
+	}
+	allowed := slack(want)
 	best, bestDist := "", -1
 	for _, c := range candidates {
+		// A name whose length is further off than the slack allows cannot
+		// be close enough, so it is not worth comparing.
+		if len(c) > maxCompare || len(c)-len(want) > 4*allowed || len(want)-len(c) > 4*allowed {
+			continue
+		}
 		d := distance(want, c)
 		if bestDist < 0 || d < bestDist || (d == bestDist && c < best) {
 			best, bestDist = c, d

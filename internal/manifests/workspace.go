@@ -68,13 +68,29 @@ func (w *Workspace) Resolve(path string) (string, error) {
 		}
 		return "", fmt.Errorf("%s: outside the configured workspace roots", path)
 	}
-	// Do not reveal whether a path outside the workspace exists.
+	// Do not reveal whether a path outside the workspace exists. A path that
+	// does not exist may still pass through a link that leaves the workspace,
+	// so the part of it that does exist is resolved and checked too.
 	for _, candidate := range candidates {
-		if !w.within(filepath.Clean(candidate)) {
+		if !w.within(filepath.Clean(candidate)) || !w.within(existingPart(filepath.Clean(candidate))) {
 			return "", fmt.Errorf("%s: outside the configured workspace roots", path)
 		}
 	}
 	return "", fmt.Errorf("%s: no such file or directory in the workspace", path)
+}
+
+// existingPart resolves the longest leading part of p that exists.
+func existingPart(p string) string {
+	for {
+		if real, err := filepath.EvalSymlinks(p); err == nil {
+			return real
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return p
+		}
+		p = parent
+	}
 }
 
 func (w *Workspace) within(p string) bool {
@@ -107,6 +123,14 @@ func (w *Workspace) LoadFile(path string, lim Limits) ([]Resource, error) {
 }
 
 func (w *Workspace) loadReal(real string, lim Limits) ([]Resource, error) {
+	data, err := w.readReal(real, lim)
+	if err != nil {
+		return nil, err
+	}
+	return Parse(data, w.Display(real), lim)
+}
+
+func (w *Workspace) readReal(real string, lim Limits) ([]byte, error) {
 	info, err := os.Stat(real)
 	if err != nil {
 		return nil, err
@@ -114,14 +138,14 @@ func (w *Workspace) loadReal(real string, lim Limits) ([]Resource, error) {
 	if info.IsDir() {
 		return nil, fmt.Errorf("%s is a directory; use the directory check instead", w.Display(real))
 	}
+	// A pipe or a device never ends, or blocks until something writes to it.
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", w.Display(real))
+	}
 	if lim.MaxBytes > 0 && info.Size() > lim.MaxBytes {
 		return nil, fmt.Errorf("%s is %d bytes, larger than the %d byte limit", w.Display(real), info.Size(), lim.MaxBytes)
 	}
-	data, err := os.ReadFile(real)
-	if err != nil {
-		return nil, err
-	}
-	return Parse(data, w.Display(real), lim)
+	return os.ReadFile(real)
 }
 
 // DirLimits bounds a directory walk.
@@ -130,9 +154,13 @@ type DirLimits struct {
 	MaxFiles int
 }
 
-// LoadDir parses every .yaml, .yml and .json file under dir. Files that are
-// not Kubernetes manifests (Helm templates, values files, kustomizations) are
-// skipped and reported rather than failing the whole request.
+// LoadDir parses every .yaml, .yml and .json file under dir.
+//
+// A document that is not a Kubernetes resource (a Helm values file, a
+// kustomization) is left out and listed, and the rest of its file is still
+// read. A file that cannot be read at all (not valid YAML, too large, a
+// symbolic link) is listed with NotRead set. Its contents are unknown, so a
+// report over the directory is then not complete.
 func (w *Workspace) LoadDir(dir string, lim DirLimits) ([]Resource, []links.SkippedFile, error) {
 	real, err := w.Resolve(dir)
 	if err != nil {
@@ -146,6 +174,7 @@ func (w *Workspace) LoadDir(dir string, lim DirLimits) ([]Resource, []links.Skip
 		return nil, nil, fmt.Errorf("%s is not a directory", dir)
 	}
 	var files []string
+	var notRead []links.SkippedFile
 	err = filepath.WalkDir(real, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -157,11 +186,14 @@ func (w *Workspace) LoadDir(dir string, lim DirLimits) ([]Resource, []links.Skip
 			}
 			return nil
 		}
-		if !d.Type().IsRegular() {
-			return nil // never follow symlinks during a walk
-		}
 		switch strings.ToLower(filepath.Ext(name)) {
 		case ".yaml", ".yml", ".json":
+			if !d.Type().IsRegular() {
+				// Never follow a link during a walk: it may leave the
+				// workspace. Say so, because the file was not read.
+				notRead = append(notRead, links.SkippedFile{Path: w.Display(p), Reason: "not a regular file (a symbolic link, for example), so it was not read", NotRead: true})
+				return nil
+			}
 			files = append(files, p)
 			if lim.MaxFiles > 0 && len(files) > lim.MaxFiles {
 				return fmt.Errorf("more than %d manifest files under %s", lim.MaxFiles, dir)
@@ -174,21 +206,30 @@ func (w *Workspace) LoadDir(dir string, lim DirLimits) ([]Resource, []links.Skip
 	}
 	sort.Strings(files)
 	var out []Resource
-	var skipped []links.SkippedFile
+	skipped := notRead
 	for _, f := range files {
-		rs, err := w.loadReal(f, lim.Limits)
+		shown := w.Display(f)
+		data, err := w.readReal(f, lim.Limits)
 		if err != nil {
-			skipped = append(skipped, links.SkippedFile{Path: w.Display(f), Reason: err.Error()})
+			skipped = append(skipped, links.SkippedFile{Path: shown, Reason: err.Error(), NotRead: true})
 			continue
 		}
-		if len(rs) == 0 {
-			skipped = append(skipped, links.SkippedFile{Path: w.Display(f), Reason: "no Kubernetes resources found"})
+		rs, notResources, err := ParseLenient(data, shown, lim.Limits)
+		if err != nil {
+			skipped = append(skipped, links.SkippedFile{Path: shown, Reason: err.Error(), NotRead: true})
 			continue
+		}
+		switch {
+		case len(notResources) > 0:
+			skipped = append(skipped, links.SkippedFile{Path: shown, Reason: strings.Join(notResources, "; ")})
+		case len(rs) == 0:
+			skipped = append(skipped, links.SkippedFile{Path: shown, Reason: "no Kubernetes resources found"})
 		}
 		out = append(out, rs...)
 		if lim.MaxResources > 0 && len(out) > lim.MaxResources {
 			return nil, nil, fmt.Errorf("more than %d resources under %s", lim.MaxResources, dir)
 		}
 	}
+	sort.Slice(skipped, func(i, j int) bool { return skipped[i].Path < skipped[j].Path })
 	return out, skipped, nil
 }

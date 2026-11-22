@@ -31,7 +31,8 @@ var meanings = map[links.Status]string{
 var reasonMeanings = map[links.Reason]string{
 	links.ReasonNotInBundle:      "The target is not in the bundle. It may already exist in the cluster. Add it, pass it in clusterObjects, or set bundleComplete if nothing else exists.",
 	links.ReasonNamespaceUnknown: "One of the two resources sets no namespace, so it is not known whether they are in the same one. Pass the namespace the bundle is deployed to.",
-	links.ReasonPortNotDeclared:  "The pods do not declare this port, but that is not certain to be a mistake. A container does not have to declare a port number it listens on, and a named port may be meant for other pods the Service selects.",
+	links.ReasonPortNotDeclared:  "The pods do not declare this port, but that is not certain to be a mistake. A container does not have to declare a port number it listens on. A named port may be declared by a container the cluster adds to the pod, or be meant for other pods the Service selects. Set bundleComplete if nothing else will exist.",
+	links.ReasonInvalid:          "The reference is not well-formed, so what it points at is not known. Correct it and check again.",
 	links.ReasonDetailsUnknown:   "The target is known, but not the part of it this reference needs.",
 }
 

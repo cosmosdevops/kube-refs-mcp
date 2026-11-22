@@ -158,7 +158,9 @@ func closestTemplate(sel labels.Selector, templates []*podTemplate) (*podTemplat
 				// The nearer the value, the likelier it is the one meant.
 				score++
 				if want != "" {
-					if d := distance(want, have); d <= slack(want) {
+					if len(want) > maxCompare || len(have) > maxCompare {
+						// Too long to be worth comparing.
+					} else if d := distance(want, have); d <= slack(want) {
 						score += 4 - min(d, 3)
 					}
 				}
@@ -240,21 +242,28 @@ func (c *run) checkService(o *object) {
 			}
 		}
 		for _, t := range matched {
-			c.add(servicePortLink(o, t, field, target, isNum, someHave))
+			c.add(c.servicePortLink(o, t, field, target, isNum, someHave))
 		}
 	}
 }
 
+// invalidSelector is the link for a selector that cannot be read. What it
+// would select is then unknown, which is not a pass.
 func invalidSelector(o *object, check, field string, err error) links.Link {
-	return links.Link{Check: check, Status: links.StatusSkipped, Reason: links.ReasonInvalid, From: o.ref, Field: field,
+	return links.Link{Check: check, Status: links.StatusUnresolved, Reason: links.ReasonInvalid, From: o.ref, Field: field,
 		To:      links.Target{Kind: "Pod", Namespace: o.ns},
-		Message: fmt.Sprintf("The selector of %s is not valid, so it was not followed: %v. A schema check reports this in full.", o.ref, err)}
+		Message: fmt.Sprintf("The selector of %s is not valid, so it could not be followed: %s.", o.ref, clip(err.Error(), 300)),
+		Fix:     fmt.Sprintf("Correct %s. Label values must be strings, so a number or a boolean needs quotes.", field)}
 }
 
 // servicePortLink checks one Service target port against one selected pod
 // template. othersHaveIt says that another selected template declares the
 // named port.
-func servicePortLink(svc *object, t *podTemplate, field, port string, isNum, othersHaveIt bool) links.Link {
+//
+// A named port that the template does not declare is only certain to be
+// wrong when the bundle is complete. Otherwise a container the cluster adds
+// to the pod, such as an injected sidecar, may declare it.
+func (c *run) servicePortLink(svc *object, t *podTemplate, field, port string, isNum, othersHaveIt bool) links.Link {
 	byName, numbers := t.ports()
 	l := links.Link{Check: "service-port", From: svc.ref, Field: field,
 		To: links.Target{Kind: t.owner.gk.Kind, Namespace: t.owner.ns, Name: t.owner.name, Port: port, Source: t.owner.ref.Source}}
@@ -285,12 +294,21 @@ func servicePortLink(svc *object, t *podTemplate, field, port string, isNum, oth
 			l.Message = fmt.Sprintf("%s sends to the port named %q, which the pods of %s declare.", svc.ref, port, t.owner.ref)
 			return l
 		}
-		l.Status, l.Reason = links.StatusBroken, links.ReasonPortMissing
-		l.Message = fmt.Sprintf("%s sends to the port named %q, and the pods of %s declare no port with that name. A named port only works if a container declares it.", svc.ref, port, t.owner.ref)
 		l.Fix = fmt.Sprintf("Name a container port %q in %s, or change %s to a port the pods declare.", port, t.owner.ref, field)
-		if othersHaveIt {
+		switch {
+		case t.owner.cluster:
+			l.Status, l.Reason = links.StatusUnresolved, links.ReasonPortNotDeclared
+			l.Message = fmt.Sprintf("%s sends to the port named %q. %s was supplied as existing in the cluster, and the copy given declares no port with that name, so this cannot be decided.", svc.ref, port, t.owner.ref)
+			l.Fix = fmt.Sprintf("Include the container ports in the copy of %s passed in clusterObjects.", t.owner.ref)
+		case othersHaveIt:
 			l.Status, l.Reason = links.StatusUnresolved, links.ReasonPortNotDeclared
 			l.Message = fmt.Sprintf("%s sends to the port named %q. The pods of %s declare no port with that name, so they get no traffic on it. Other pods the Service selects do declare it, so this may be intended.", svc.ref, port, t.owner.ref)
+		case c.req.BundleComplete:
+			l.Status, l.Reason = links.StatusBroken, links.ReasonPortMissing
+			l.Message = fmt.Sprintf("%s sends to the port named %q, and the pods of %s declare no port with that name. A named port only works if a container declares it. The bundle was said to be complete, so this is broken.", svc.ref, port, t.owner.ref)
+		default:
+			l.Status, l.Reason = links.StatusUnresolved, links.ReasonPortNotDeclared
+			l.Message = fmt.Sprintf("%s sends to the port named %q, and the pods of %s declare no port with that name. A named port only works if a container declares it. A container the cluster adds to the pod, such as an injected sidecar, may declare it.", svc.ref, port, t.owner.ref)
 		}
 		if n, ok := nearest(port, sortedKeys(byName)); ok {
 			l.ClosestMatch = fmt.Sprintf("port %s (%s) of %s", n, byName[n], t.owner.ref)

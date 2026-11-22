@@ -173,10 +173,16 @@ type Summary struct {
 	Errors     int `json:"errors"`
 }
 
-// SkippedFile is a file that was found but not checked.
+// SkippedFile is a file that was found but not checked, in whole or in
+// part.
 type SkippedFile struct {
 	Path   string `json:"path"`
 	Reason string `json:"reason"`
+	// NotRead is true when the file could not be read, so what it holds is
+	// not known. A report with such a file is not complete. It is false
+	// when the file was read and held something that is not a Kubernetes
+	// resource.
+	NotRead bool `json:"notRead,omitempty"`
 }
 
 // Verdict is the overall result of a report.
@@ -188,7 +194,7 @@ const (
 	// VerdictFail: at least one link is broken.
 	VerdictFail Verdict = "fail"
 	// VerdictUnknown: nothing is broken, but some links are unresolved or
-	// errored.
+	// errored, or a file could not be read.
 	VerdictUnknown Verdict = "unknown"
 )
 
@@ -198,8 +204,8 @@ type Report struct {
 	// Status is "fail" if any link is broken, otherwise "unknown" if the
 	// report is incomplete, otherwise "pass".
 	Status Verdict `json:"status"`
-	// Complete is false when any link is unresolved or errored. It is
-	// reported separately from the verdict.
+	// Complete is false when any link is unresolved or errored, or when a
+	// file could not be read. It is reported separately from the verdict.
 	Complete bool `json:"complete"`
 	// Consistent is true only when nothing is broken and the report is
 	// complete.
@@ -241,6 +247,11 @@ func Aggregate(r *Report, all []Link) {
 		}
 	}
 	r.Complete = s.Unresolved == 0 && s.Errors == 0
+	for _, f := range r.SkippedFiles {
+		if f.NotRead {
+			r.Complete = false
+		}
+	}
 	switch {
 	case s.Broken > 0:
 		r.Status = VerdictFail

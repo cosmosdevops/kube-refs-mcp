@@ -9,7 +9,7 @@ checks` and the `list_checks` tool print the same list.
 | Check | Looks at | What it decides |
 | --- | --- | --- |
 | `service-selector` | A Service's selector matches the pod template of a workload. | Unresolved when it matches nothing: matching pods may be in the cluster. |
-| `service-port` | A Service's target port is a container port of the pods it selects. | Broken when a named port is declared by none of the selected pods. Unresolved when a number is not declared, because declaring ports is optional. |
+| `service-port` | A Service's target port is a container port of the pods it selects. | Broken when a named port is declared by none of the selected pods and the bundle is complete. Unresolved otherwise: a container the cluster adds may declare the name, and declaring a number is optional. |
 | `workload-selector` | A workload's selector matches its own pod template labels. | Broken when it does not match. Both ends are in one resource, so this is always certain. |
 | `configmap` | A pod's ConfigMap exists and has the keys the pod uses. | Broken when the ConfigMap is in the bundle without the key. Unresolved when the ConfigMap is not in the bundle. |
 | `secret` | A pod's Secret exists and has the keys the pod uses. Covers image pull secrets. | Broken when the Secret is in the bundle without the key. Unresolved when the Secret is not in the bundle. |
@@ -18,7 +18,7 @@ checks` and the `list_checks` tool print the same list.
 | `statefulset-service` | The Service a StatefulSet names in spec.serviceName exists. | Unresolved when the Service is not in the bundle. |
 | `ingress-backend` | An Ingress backend's Service exists and exposes the port. | Broken when the Service is in the bundle without the port. Unresolved when the Service is not in the bundle. |
 | `ingress-tls` | An Ingress's TLS Secret exists. | Unresolved when the Secret is not in the bundle. |
-| `route-backend` | A Route's Service exists and has the port. | Broken when the Service is in the bundle without the named port. Unresolved when a port number does not match, or the Service is not in the bundle. |
+| `route-backend` | A Route's Service exists and has the port. | Broken when the Service is in the bundle without the named port. Unresolved when a port number does not match, when the name is a target port name, or when the Service is not in the bundle. |
 | `hpa-target` | The workload a HorizontalPodAutoscaler scales exists. | Unresolved when the workload is not in the bundle. |
 | `pdb-selector` | A PodDisruptionBudget's selector matches the pod template of a workload. | Unresolved when it matches nothing. |
 | `networkpolicy-selector` | A NetworkPolicy's pod selector matches the pod template of a workload. | Unresolved when it matches nothing. |
@@ -63,7 +63,11 @@ Skipped cases:
   every pod, so there is nothing to get wrong.
 - A selector that uses a label the cluster only adds to running pods, such
   as `pod-template-hash` or `statefulset.kubernetes.io/pod-name`.
-- A selector that is not valid. The schema check reports that.
+
+A selector that is not valid cannot be followed, so what it selects is not
+known. That is `unresolved` with reason `invalid`, even with
+`bundleComplete`. A common cause is a label value written as a number or a
+boolean without quotes.
 
 A Job's pods always carry `job-name` and `batch.kubernetes.io/job-name`, so
 those two labels are added to a Job's template before matching.
@@ -77,7 +81,8 @@ Service's `port` is used, as Kubernetes does.
 | Target port | Pods | Result |
 | --- | --- | --- |
 | A name | Declare a port with that name | `ok` |
-| A name | Do not, and no other selected workload does | `broken`. A named port only works if a container declares it. |
+| A name | Do not, and no other selected workload does | `unresolved`, reason `port_not_declared`. With `bundleComplete`: `broken`. |
+| A name | Do not, and the workload is a cluster object | `unresolved`, reason `port_not_declared`, even with `bundleComplete` |
 | A name | Do not, but another selected workload does | `unresolved`, reason `port_not_declared`. Those pods get no traffic on the port, which may be intended. |
 | A number | Declare that number | `ok` |
 | A number | Declare other ports | `unresolved`, reason `port_not_declared` |
@@ -86,6 +91,11 @@ Service's `port` is used, as Kubernetes does.
 Kubernetes does not require a container to list the ports it listens on. A
 number that is not listed may still work, so it is never called broken, not
 even with `bundleComplete`.
+
+A named port only works if a container declares it. But a container that
+the cluster adds to the pod may be the one that does: an injected sidecar
+is the usual case. So a missing name is only `broken` when the caller says
+the bundle is complete.
 
 Ports are read from containers and init containers.
 
@@ -141,6 +151,7 @@ the port on the pods, which is the Service's `targetPort`.
 | --- | --- | --- |
 | A name | Has a port with that name | `ok` |
 | A name | Has no port with that name | `broken` |
+| A name | Has it only as the name of a target port | `unresolved`, reason `port_not_declared` |
 | A number | Has that number as a target port | `ok` |
 | A number | Has other numbers as target ports | `unresolved`, reason `port_not_declared` |
 | A number | Names its target ports | `skipped`. The number behind the name is on the pods. |
@@ -148,6 +159,8 @@ the port on the pods, which is the Service's `targetPort`.
 A number that does not match is not called `broken`. The rule for numbers is
 taken from how the router is documented to behave, and it has not been
 tested against a running router. That is not certain enough for `broken`.
+The same goes for a name that is only a target port name: it is not known
+whether the router accepts it, so it is not called `ok` either.
 
 ## Autoscaler
 

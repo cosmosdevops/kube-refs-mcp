@@ -243,7 +243,14 @@ func (in *input) run(ctx context.Context, a *app.App, stdin io.Reader, all bool)
 			data, err = io.ReadAll(io.LimitReader(stdin, lim.MaxBytes+1))
 			name = "stdin"
 		} else {
-			data, err = os.ReadFile(f)
+			// The person at the command line chose this file, so a pipe is
+			// read too, as in -f <(helm template .). The read is still
+			// bounded.
+			var file *os.File
+			if file, err = os.Open(f); err == nil {
+				data, err = io.ReadAll(io.LimitReader(file, lim.MaxBytes+1))
+				file.Close()
+			}
 		}
 		if err != nil {
 			return nil, err
@@ -412,7 +419,11 @@ func printHeader(w io.Writer, r *links.Report) {
 
 func printFooter(w io.Writer, r *links.Report) {
 	for _, sk := range r.SkippedFiles {
-		fmt.Fprintf(w, "skipped %s: %s\n", sk.Path, sk.Reason)
+		label := "skipped"
+		if sk.NotRead {
+			label = "NOT READ"
+		}
+		fmt.Fprintf(w, "%s %s: %s\n", label, sk.Path, sk.Reason)
 	}
 	if len(r.Notes) > 0 {
 		fmt.Fprintln(w, "\nNotes:")

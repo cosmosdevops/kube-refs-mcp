@@ -191,6 +191,21 @@ func TestServicePorts(t *testing.T) {
 	}
 }
 
+// A named port the pods do not declare is only certain to be wrong when the
+// bundle is complete. A container the cluster adds, such as an injected
+// sidecar, may declare it.
+func TestNamedPortMayComeFromTheCluster(t *testing.T) {
+	web := deployment("web", "", "{app: web}", "ports: [{name: http, containerPort: 8080}]", "")
+	svc := service("web", "", "{app: web}", "[{port: 15090, targetPort: http-envoy-prom}]")
+	expect(t, one(t, check(t, web+svc), "service-port"), links.StatusUnresolved, links.ReasonPortNotDeclared)
+	expect(t, one(t, check(t, web+svc, complete), "service-port"), links.StatusBroken, links.ReasonPortMissing)
+
+	// A workload given as a cluster object is taken on trust. A copy of it
+	// without the port is not proof that the port is missing.
+	res := check(t, svc, inCluster(t, web), complete)
+	expect(t, one(t, res, "service-port"), links.StatusUnresolved, links.ReasonPortNotDeclared)
+}
+
 // A named port that only some of the selected workloads declare may be
 // intended, so it is not called broken.
 func TestNamedPortOnSomeOfThePods(t *testing.T) {
@@ -234,8 +249,8 @@ func TestMatchExpressionsUseTheKubernetesLibrary(t *testing.T) {
 	}
 	// An empty selector picks every pod, so there is nothing to get wrong.
 	expect(t, one(t, check(t, pods+pdb("{}")), "pdb-selector"), links.StatusSkipped, links.ReasonNotApplicable)
-	// A selector that is not valid is left to the schema check.
-	expect(t, one(t, check(t, pods+pdb(`{matchExpressions: [{key: tier, operator: Sometimes}]}`)), "pdb-selector"), links.StatusSkipped, links.ReasonInvalid)
+	// A selector that is not valid cannot be followed. That is not a pass.
+	expect(t, one(t, check(t, pods+pdb(`{matchExpressions: [{key: tier, operator: Sometimes}]}`)), "pdb-selector"), links.StatusUnresolved, links.ReasonInvalid)
 
 	np := "\n---\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: {name: netpol}\nspec:\n  podSelector: {matchLabels: {app: zzz}}\n"
 	expect(t, one(t, check(t, pods+np), "networkpolicy-selector"), links.StatusUnresolved, links.ReasonNotInBundle)
@@ -469,6 +484,18 @@ spec:
 	}
 }
 
+// The docs say the pod template labels of a workload are enough for a
+// cluster object.
+func TestClusterWorkloadWithLabelsOnly(t *testing.T) {
+	existing := "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: web}\nspec:\n  template:\n    metadata: {labels: {app: web}}\n"
+	res := check(t, service("web", "", "{app: web}", "[{port: 80}]"), inCluster(t, existing), complete)
+	expect(t, one(t, res, "service-selector"), links.StatusOK, "")
+	// A kind the tool does not know still needs the full shape of a workload.
+	custom := "apiVersion: example.com/v1\nkind: Widget\nmetadata: {name: web}\nspec:\n  template:\n    metadata: {labels: {app: web}}\n"
+	res = check(t, service("web", "", "{app: web}", "[{port: 80}]"), inCluster(t, custom))
+	expect(t, one(t, res, "service-selector"), links.StatusUnresolved, links.ReasonNotInBundle)
+}
+
 func TestRoute(t *testing.T) {
 	svc := service("web", "", "{app: web}", "[{name: http, port: 80, targetPort: 8080}]") + deployment("web", "", "{app: web}", "", "")
 	route := func(to, port string) string {
@@ -492,6 +519,10 @@ func TestRoute(t *testing.T) {
 			expect(t, one(t, check(t, svc+route(tc.to, tc.port)), "route-backend"), tc.status, tc.reason)
 		})
 	}
+	// The name of a target port is a name on the pods, not a Service port
+	// name. Whether the router takes it has not been tested, so it is not ok.
+	podName := service("web", "", "{app: web}", "[{name: web, port: 80, targetPort: http}]")
+	expect(t, one(t, check(t, podName+route("web", "  port: {targetPort: http}\n")), "route-backend"), links.StatusUnresolved, links.ReasonPortNotDeclared)
 	// A Service that names its target port hides the number.
 	named := service("web", "", "{app: web}", "[{name: http, port: 80, targetPort: http}]")
 	expect(t, one(t, check(t, named+route("web", "  port: {targetPort: 9999}\n")), "route-backend"), links.StatusSkipped, links.ReasonDetailsUnknown)
@@ -636,7 +667,22 @@ subjects: [1]
 			t.Errorf("error link: %+v", l)
 		}
 	}
-	expect(t, one(t, res, "service-selector"), links.StatusSkipped, links.ReasonInvalid)
+	expect(t, one(t, res, "service-selector"), links.StatusUnresolved, links.ReasonInvalid)
+}
+
+// A reference that could not be followed is never a pass, even when the
+// bundle is said to be complete.
+func TestInvalidSelectorIsNotAPass(t *testing.T) {
+	bundle := service("s", "", "{app: web, version: 2}", "[{port: 80}]") + deployment("other", "", "{app: other}", "", "")
+	for _, opts := range [][]func(*Request){nil, {complete}} {
+		res := check(t, bundle, opts...)
+		expect(t, one(t, res, "service-selector"), links.StatusUnresolved, links.ReasonInvalid)
+		if res.Report.Complete || res.Report.Status != links.VerdictUnknown {
+			t.Errorf("report = %s, complete %t", res.Report.Status, res.Report.Complete)
+		}
+	}
+	crb := "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata: {name: b}\nroleRef: {kind: ClusterRole, name: view}\nsubjects: [{kind: ServiceAccount, name: runner}]\n"
+	expect(t, one(t, check(t, crb), "binding-subject"), links.StatusUnresolved, links.ReasonInvalid)
 }
 
 func TestDuplicatesAreNoted(t *testing.T) {
@@ -656,6 +702,91 @@ func TestRunStopsWhenOutOfTime(t *testing.T) {
 	cancel()
 	if _, err := Run(ctx, Request{Resources: parse(t, deployment("web", "", "{app: web}", "", ""), "inline")}); err == nil {
 		t.Error("a cancelled check returned a result")
+	}
+}
+
+// One resource with many references must not outrun the time limit.
+func TestRunStopsInsideOneResource(t *testing.T) {
+	refs := "envFrom:\n"
+	for i := 0; i < 50; i++ {
+		refs += "  - secretRef: {name: s" + strings.Repeat("x", i) + "}\n"
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	c := &run{ctx: ctx, sel: mustSelect(t), byName: map[gk]map[string]map[string]*object{}}
+	o := c.index(parse(t, deployment("web", "", "{app: web}", refs, ""), "inline")[0], false)
+	c.templates = templatesOf(o)
+	cancel()
+	c.checkObject(o)
+	if c.failed == nil || len(c.links) != 0 {
+		t.Errorf("failed = %v with %d links; want the run stopped before any link", c.failed, len(c.links))
+	}
+}
+
+func mustSelect(t *testing.T) Selection {
+	t.Helper()
+	sel, err := Select(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sel
+}
+
+// A name far longer than Kubernetes allows is not followed, is not compared
+// for a hint, and is not copied into the result.
+func TestOverlongReferencesAreBounded(t *testing.T) {
+	long := strings.Repeat("b", 60000)
+	bundle := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: config}\ndata: {a: b}\n" +
+		deployment("web", "", "{app: web}", "envFrom:\n  - configMapRef: {name: "+long+"}\n", "")
+	res := check(t, bundle)
+	l := one(t, res, "configmap")
+	expect(t, l, links.StatusUnresolved, links.ReasonInvalid)
+	// What is returned and what is kept for explain_finding. The bundle
+	// itself, res.Resources, is neither.
+	raw, err := json.Marshal([]any{res.Report, res.Links, l.Expected, l.Found, l.Candidates})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) > 20000 || strings.Contains(string(raw), long[:1000]) {
+		t.Errorf("the long name reached the result (%d bytes)", len(raw))
+	}
+	if _, ok := nearest(long, []string{long[:len(long)-1]}); ok {
+		t.Error("an overlong name was compared for a hint")
+	}
+	// A long label value in a selector is bounded the same way.
+	res = check(t, service("s", "", "{app: "+long+"}", "[{port: 80}]")+deployment("web", "", "{app: web}", "", ""))
+	expect(t, one(t, res, "service-selector"), links.StatusUnresolved, links.ReasonInvalid)
+}
+
+// The number of references in one request is bounded.
+func TestTooManyReferencesAreRefused(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("envFrom:\n")
+	for i := 0; i <= maxLinks; i++ {
+		b.WriteString("  - secretRef: {name: s}\n")
+	}
+	_, err := Run(context.Background(), Request{Resources: parse(t, deployment("web", "", "{app: web}", b.String(), ""), "inline")})
+	if err == nil || !strings.Contains(err.Error(), "references") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// A file that could not be read makes the report incomplete.
+func TestUnreadFileIsNotAPass(t *testing.T) {
+	skipped := func(notRead bool) func(*Request) {
+		return func(r *Request) {
+			r.SkippedFiles = []links.SkippedFile{{Path: "x.yaml", Reason: "r", NotRead: notRead}}
+		}
+	}
+	bundle := deployment("web", "", "{app: web}", "", "")
+	if res := check(t, bundle, skipped(false)); !res.Report.Consistent {
+		t.Errorf("a file that held no resource changed the verdict: %+v", res.Report)
+	}
+	res := check(t, bundle, skipped(true))
+	if res.Report.Complete || res.Report.Consistent || res.Report.Status != links.VerdictUnknown {
+		t.Errorf("report = %s, complete %t, consistent %t", res.Report.Status, res.Report.Complete, res.Report.Consistent)
+	}
+	if !strings.Contains(strings.Join(res.Report.Notes, " "), "could not be read") {
+		t.Errorf("notes = %v", res.Report.Notes)
 	}
 }
 
@@ -754,7 +885,7 @@ func TestChecksCanBeTurnedOff(t *testing.T) {
 		t.Errorf("notes = %v", res.Report.Notes)
 	}
 	// The port check needs the selector's matches. It still has them.
-	expect(t, one(t, res, "service-port"), links.StatusBroken, links.ReasonPortMissing)
+	expect(t, one(t, res, "service-port"), links.StatusUnresolved, links.ReasonPortNotDeclared)
 
 	// The verdict covers what ran.
 	res = check(t, bundle, func(r *Request) { r.Checks = []string{"workload-selector"} })

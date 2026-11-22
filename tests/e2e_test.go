@@ -103,7 +103,10 @@ type report struct {
 			Findings []link `json:"findings"`
 		} `json:"resources"`
 	} `json:"files"`
-	SkippedFiles []struct{ Path, Reason string } `json:"skippedFiles"`
+	SkippedFiles []struct {
+		Path, Reason string
+		NotRead      bool `json:"notRead"`
+	} `json:"skippedFiles"`
 }
 
 // byCheck returns the first finding of a check.
@@ -434,6 +437,55 @@ func TestFilesDirectoryAndWorkspaceLimits(t *testing.T) {
 	bare := connect(t)
 	if isErr, text := call(t, bare, "check_manifests", map[string]any{"files": []string{"app/deploy.yaml"}}, nil); !isErr || !strings.Contains(text, "file access is disabled") {
 		t.Errorf("no workspace: isError=%t %s", isErr, text)
+	}
+}
+
+// A directory check must not report a pass over a file it could not read,
+// and one document that is not a resource must not hide the rest of its
+// file.
+func TestUnreadFilesAreNotAPass(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("config.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cm}\ndata: {a: b}\n")
+	write("values.yaml", "replicaCount: 2\n")
+	s := connect(t, "--workspace-root", root)
+
+	// Only files that hold no resource are skipped: still a pass.
+	var rep report
+	if isErr, text := call(t, s, "check_directory", map[string]any{"directory": "."}, &rep); isErr || rep.Status != "pass" || !rep.Complete {
+		t.Fatalf("%v %s %+v", isErr, text, rep)
+	}
+
+	// A file that is not valid YAML may hold anything.
+	write("broken.yaml", "apiVersion: v1\nkind: Service\nmetadata: {name: s\n  bad: [\n")
+	if isErr, text := call(t, s, "check_directory", map[string]any{"directory": "."}, &rep); isErr || rep.Status != "unknown" || rep.Complete || rep.Consistent {
+		t.Fatalf("%v %s status %s complete %t", isErr, text, rep.Status, rep.Complete)
+	}
+	notRead := 0
+	for _, f := range rep.SkippedFiles {
+		if f.NotRead {
+			notRead++
+			if f.Path != "broken.yaml" {
+				t.Errorf("not read: %+v", f)
+			}
+		}
+	}
+	if notRead != 1 {
+		t.Errorf("skipped = %+v", rep.SkippedFiles)
+	}
+	if code, out := runCLI(t, "", "check", "--dir", root); code != 2 || !strings.Contains(out, "NOT READ") {
+		t.Errorf("exit %d\n%s", code, out)
+	}
+
+	// A Kustomization beside a Pod: the Pod is still checked.
+	write("broken.yaml", "apiVersion: v1\nkind: Pod\nmetadata: {name: p}\nspec:\n  containers:\n    - name: c\n      image: example.com/app:1\n      env:\n        - name: X\n          valueFrom: {configMapKeyRef: {name: cm, key: nope}}\n---\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: [config.yaml]\n")
+	if isErr, text := call(t, s, "check_directory", map[string]any{"directory": "."}, &rep); isErr || rep.Status != "fail" || rep.Summary.Broken != 1 {
+		t.Fatalf("%v %s %+v", isErr, text, rep.Summary)
 	}
 }
 

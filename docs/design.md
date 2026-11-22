@@ -86,17 +86,38 @@ and `matchExpressions` behave exactly as they do in a cluster.
 ## Failure handling
 
 - Input that cannot be parsed is an error for the whole request.
-- In a directory, a file that is not a manifest is listed under
-  `skippedFiles` and the rest is checked.
+- In a directory, a file that holds no resource is listed under
+  `skippedFiles` and the rest is checked. A file that cannot be read at all
+  is listed too, and the report is then not complete.
+- A reference that cannot be followed, such as a selector that is not
+  valid, is `unresolved`. It is never counted as a pass.
 - A check that panics becomes an `error` link for that resource. The report
   is then not complete.
 - A check that runs out of time returns an error, not a partial result.
+
+## Bounds
+
+A manifest can come from anyone: a caller of a hosted server, or a file in
+a repository an agent has cloned. So the cost of a check must not depend on
+what the manifest says.
+
+- Input size, file count and resource count are limited by flags.
+- Names and field names are limited to 512 characters when a manifest is
+  read. A longer reference inside a resource is not followed, and it is not
+  copied into the result.
+- YAML aliases are measured as if written out in full, so a small file
+  cannot stand for a large document.
+- The number of links in one check is limited.
+- The time limit is tested for every link, not only between resources.
+- Hints compare names letter by letter, which is slow for long names. Names
+  longer than a real Kubernetes name are not compared.
 
 ## Secrets
 
 The bundle often holds Secret values. The checks read the key names of a
 Secret and nothing else. No value is copied into a link, a message or an
-explanation. Tests check this at the unit level and over MCP.
+explanation. The history kept for `explain_finding` holds links only, not
+the manifests. A parse error names a line and never quotes the document. Tests check this at the unit level and over MCP.
 
 ## Libraries
 
@@ -104,6 +125,7 @@ explanation. Tests check this at the unit level and over MCP.
 | --- | --- |
 | `github.com/modelcontextprotocol/go-sdk` | MCP over stdio and HTTP |
 | `k8s.io/apimachinery` | YAML decoding and label selectors |
+| `go.yaml.in/yaml/v3` | Measuring YAML aliases before decoding |
 | `github.com/spf13/cobra` | The command line |
 | `golang.org/x/time` | Rate limits in hosted mode |
 

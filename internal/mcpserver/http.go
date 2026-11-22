@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
@@ -22,9 +23,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// This file is the hosted mode: MCP over HTTP for holders of an API key. It
-// follows the same design as the ojs-mcp server, so that both are run and
-// managed in the same way.
+// This file is the hosted mode: MCP over HTTP for holders of an API key.
 
 // API keys look like "krm_" followed by 32 random bytes. The server never
 // stores a key, only its SHA-256, so the keys file is no use to a thief.
@@ -234,12 +233,42 @@ func NewHTTPHandler(server *mcp.Server, keys *KeyStore, limits *Limiters, maxInp
 			http.Error(rec, "rate limit reached for this API key; try again shortly", http.StatusTooManyRequests)
 			return
 		}
+		// One call per request. A batch would be many calls counted as one
+		// against the rate limit.
+		if r.Method == http.MethodPost && r.Body != nil {
+			body := bufio.NewReader(r.Body)
+			if firstByte(body) == '[' {
+				http.Error(rec, "send one JSON-RPC message per request; batches are not accepted", http.StatusBadRequest)
+				return
+			}
+			r.Body = struct {
+				io.Reader
+				io.Closer
+			}{body, r.Body}
+		}
 		// Tell the tools who is calling, so that one holder cannot read
 		// another holder's checks.
 		r.Header.Set(holderHeader, holder)
 		mcpHandler.ServeHTTP(rec, r)
 	})
 	return mux
+}
+
+// firstByte returns the first byte of the body that is not white space,
+// without taking it out of the reader. It returns 0 for an empty body.
+func firstByte(body *bufio.Reader) byte {
+	for {
+		b, err := body.Peek(1)
+		if err != nil {
+			return 0
+		}
+		switch b[0] {
+		case ' ', '\t', '\r', '\n':
+			body.Discard(1)
+		default:
+			return b[0]
+		}
+	}
 }
 
 type statusRecorder struct {

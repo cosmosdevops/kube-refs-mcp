@@ -33,8 +33,14 @@ func templatesOf(o *object) []*podTemplate {
 	default:
 		tpl := getMap(obj, "spec", "template")
 		meta, spec, path = getMap(tpl, "metadata"), getMap(tpl, "spec"), "spec.template.spec"
-		if _, ok := spec["containers"].([]any); !ok {
+		// A kind this tool does not know is only read as a workload when it
+		// has the full shape of one. A known workload kind may be given
+		// with labels alone, as a cluster object often is.
+		if _, ok := spec["containers"].([]any); !ok && !workloadKinds[o.gk] {
 			return nil
+		}
+		if spec == nil && meta != nil && workloadKinds[o.gk] {
+			spec = map[string]any{}
 		}
 	}
 	if spec == nil {
@@ -51,6 +57,12 @@ func templatesOf(o *object) []*podTemplate {
 		}
 	}
 	return []*podTemplate{{owner: o, labels: labels, spec: spec, path: path}}
+}
+
+// workloadKinds are the kinds known to create pods from spec.template.
+var workloadKinds = map[gk]bool{
+	kindDeployment: true, kindReplicaSet: true, kindStatefulSet: true, kindDaemonSet: true,
+	kindJob: true, kindRC: true, kindDC: true,
 }
 
 // runtimeLabels are labels the cluster adds to running pods, with values

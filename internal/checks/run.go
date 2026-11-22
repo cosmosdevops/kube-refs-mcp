@@ -103,6 +103,10 @@ func (o *object) spec() map[string]any { return getMap(o.res.Object, "spec") }
 
 // run holds the state of one check request.
 type run struct {
+	ctx context.Context
+	// failed stops the run: out of time, or over a limit.
+	failed  error
+	checked int
 	req     Request
 	sel     Selection
 	objects []*object
@@ -122,6 +126,19 @@ const (
 	podsMayExist = " Matching pods may already exist in the cluster."
 )
 
+const (
+	// maxLinks bounds the references followed in one request.
+	maxLinks = 20000
+	// maxLinkText bounds the text of one link. A name or label that
+	// Kubernetes would accept comes nowhere near it.
+	maxLinkText = 4096
+	// maxDetail bounds each line kept for explain_finding.
+	maxDetail = 1024
+)
+
+// stop is raised from inside a check to end the whole run.
+type stop struct{ err error }
+
 // Run checks a bundle. It returns an error only when the request cannot
 // be checked at all. A check that fails part-way becomes an error link.
 func Run(ctx context.Context, req Request) (*Result, error) {
@@ -129,7 +146,7 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &run{req: req, sel: sel, byName: map[gk]map[string]map[string]*object{}}
+	c := &run{ctx: ctx, req: req, sel: sel, byName: map[gk]map[string]map[string]*object{}}
 
 	bundle, defaulted := manifests.ApplyDefaultNamespace(req.Resources, req.Namespace)
 	cluster, _ := manifests.ApplyDefaultNamespace(req.ClusterObjects, req.Namespace)
@@ -162,6 +179,15 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 	if req.BundleComplete {
 		c.notef("The bundle was said to be complete, so a target that is missing counts as broken.")
 	}
+	notRead := 0
+	for _, f := range req.SkippedFiles {
+		if f.NotRead {
+			notRead++
+		}
+	}
+	if notRead > 0 {
+		c.notef("%d file(s) could not be read, so what they hold was not checked and the result is not complete. See skippedFiles.", notRead)
+	}
 	if off := sel.Skipped(); len(off) > 0 {
 		c.notef("%d check(s) were turned off and did not run: %s. The verdict covers only the checks that ran.", len(off), strings.Join(off, ", "))
 	}
@@ -173,10 +199,14 @@ func Run(ctx context.Context, req Request) (*Result, error) {
 		if o.cluster {
 			continue
 		}
-		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("the check ran out of time after %d of %d resources: %w", len(c.links), len(c.objects), err)
+		c.checkTime()
+		if c.failed == nil {
+			c.checkObject(o)
 		}
-		c.checkObject(o)
+		if c.failed != nil {
+			return nil, c.failed
+		}
+		c.checked++
 	}
 
 	id, err := newID()
@@ -242,18 +272,46 @@ func (c *run) index(r manifests.Resource, cluster bool) *object {
 // pass.
 func (c *run) checkObject(o *object) {
 	for _, r := range runners {
+		if c.failed != nil {
+			return
+		}
 		if !r.appliesTo(o.gk) || !c.anyEnabled(r.names) {
 			continue
 		}
 		func() {
 			defer func() {
 				if p := recover(); p != nil {
+					if s, ok := p.(stop); ok {
+						c.failed = s.err
+						return
+					}
 					c.add(links.Link{Check: r.names[0], Status: links.StatusError, Reason: links.ReasonCheckFailed, From: o.ref,
 						Message: fmt.Sprintf("The %s check failed on %s: %v. This is a fault in kube-refs-mcp, not in the manifest.", r.names[0], o.ref, p)})
 				}
 			}()
 			r.fn(c, o)
 		}()
+	}
+}
+
+// checkTime ends the run once the time limit has passed. It is called
+// between resources and for every link, so one resource with thousands of
+// references cannot outrun the limit.
+func (c *run) checkTime() {
+	if c.failed != nil {
+		return
+	}
+	if c.ctx == nil {
+		return
+	}
+	if err := c.ctx.Err(); err != nil {
+		bundle := 0
+		for _, o := range c.objects {
+			if !o.cluster {
+				bundle++
+			}
+		}
+		c.failed = fmt.Errorf("the check ran out of time after %d of %d resources: %w", c.checked, bundle, err)
 	}
 }
 
@@ -277,6 +335,24 @@ func (c *run) add(l links.Link) {
 	// so: it is never hidden.
 	if !c.sel.Enabled(l.Check) && l.Status != links.StatusError {
 		return
+	}
+	if c.checkTime(); c.failed != nil {
+		panic(stop{c.failed})
+	}
+	if len(c.links) >= maxLinks {
+		panic(stop{fmt.Errorf("the bundle has more than %d references, which is over the limit for one request; check it in smaller parts", maxLinks)})
+	}
+	// A name, label or port far longer than Kubernetes allows is not
+	// followed. It is not copied into the result either.
+	if n := len(l.Message) + len(l.Fix) + len(l.ClosestMatch) + len(l.Field) + len(l.To.Name) + len(l.To.Key) + len(l.To.Port) + len(l.To.Selector); n > maxLinkText && l.Status != links.StatusError {
+		l = links.Link{Check: l.Check, Status: links.StatusUnresolved, Reason: links.ReasonInvalid, From: l.From,
+			To:      links.Target{Kind: l.To.Kind, Namespace: l.To.Namespace},
+			Message: fmt.Sprintf("%s has a reference with a name, label or port far longer than Kubernetes allows, so it was not followed.", l.From),
+			Fix:     "Shorten the name or label. Kubernetes allows at most 253 characters for a name and 63 for a label value."}
+	}
+	l.Expected, l.Found = clip(l.Expected, maxDetail), clip(l.Found, maxDetail)
+	for i := range l.Candidates {
+		l.Candidates[i] = clip(l.Candidates[i], maxDetail)
 	}
 	if c.req.BundleComplete && l.Status == links.StatusUnresolved && l.Reason == links.ReasonNotInBundle {
 		l.Status = links.StatusBroken

@@ -83,7 +83,8 @@ A report has a verdict, and says separately whether it is complete:
 
 - `status` is `fail` if anything is broken, else `unknown` if anything is
   unresolved or errored, else `pass`.
-- `complete` is `false` if anything is unresolved or errored.
+- `complete` is `false` if anything is unresolved or errored, or if a file
+  in a directory could not be read.
 - `consistent` is `true` only when nothing is broken and the report is
   complete.
 
@@ -177,10 +178,12 @@ the files are in [deploy](deploy).
 - MCP arguments are never passed to a shell.
 - Files are read only inside the workspace roots. Symlinks are resolved
   before that check.
-- Input size, file counts, resource counts and run time are bounded.
+- Input size, file counts, resource counts, name lengths, the number of
+  references and run time are bounded.
 - Only the key names of a `Secret` or `ConfigMap` are read. Values are never
   copied into a result.
-- A check that fails becomes an `error` finding, never a pass.
+- A check that fails becomes an `error` finding, never a pass. A file in a
+  directory that cannot be read makes the report incomplete.
 - In hosted mode, API keys are stored only as SHA-256 hashes.
 
 ## Limitations

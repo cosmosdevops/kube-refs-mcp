@@ -15,6 +15,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/cosmosdevops/kube-refs-mcp/internal/app"
+	"github.com/cosmosdevops/kube-refs-mcp/internal/checks"
+	"github.com/cosmosdevops/kube-refs-mcp/internal/links"
+	"github.com/cosmosdevops/kube-refs-mcp/internal/manifests"
 )
 
 // keysFile writes a keys file for the named holders and returns its path
@@ -107,6 +110,30 @@ func TestHTTPNeedsAKey(t *testing.T) {
 
 	if resp := post(t, ts.URL, "Bearer "+keys["alice"]); resp.StatusCode != http.StatusOK {
 		t.Errorf("with a good key: status = %d, want 200", resp.StatusCode)
+	}
+}
+
+// A batch is many calls in one request. It would count once against the
+// rate limit, so it is refused.
+func TestHTTPRefusesBatches(t *testing.T) {
+	path, keys := keysFile(t, "alice")
+	ts := hosted(t, path, 600, 5)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mcp", strings.NewReader(" \n["+listTools+","+listTools+"]"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Mcp-Protocol-Version", "2025-03-26")
+	req.Header.Set("Authorization", "Bearer "+keys["alice"])
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("a batch got status %d, want 400", resp.StatusCode)
+	}
+	// One message per request still works.
+	if resp := post(t, ts.URL, "Bearer "+keys["alice"]); resp.StatusCode != http.StatusOK {
+		t.Errorf("a single request got status %d", resp.StatusCode)
 	}
 }
 
@@ -351,6 +378,24 @@ func TestHTTPEndToEnd(t *testing.T) {
 	}
 	if call(t, session, "explain_finding", map[string]any{"findingId": rep.Findings[0].ID}, &ex) || ex.Summary == "" {
 		t.Errorf("explanation = %+v", ex)
+	}
+}
+
+// The history kept for explain_finding holds links, not manifests, and it
+// is bounded by size as well as by count.
+func TestHistoryKeepsNoManifests(t *testing.T) {
+	s, _ := New(testApp(t))
+	res := &checks.Result{Report: &links.Report{CheckID: "a"}, Links: make([]links.Link, 5), Resources: make([]manifests.Resource, 3)}
+	s.remember("alice", res)
+	kept := s.history["alice"].results["a"]
+	if kept == nil || len(kept.Links) != 5 || kept.Resources != nil {
+		t.Fatalf("kept = %+v", kept)
+	}
+	// A large check pushes older ones out, but is itself kept.
+	s.remember("alice", &checks.Result{Report: &links.Report{CheckID: "b"}, Links: make([]links.Link, maxHistoryLinks)})
+	h := s.history["alice"]
+	if len(h.order) != 1 || h.order[0] != "b" || h.links != maxHistoryLinks {
+		t.Errorf("order = %v, links = %d", h.order, h.links)
 	}
 }
 

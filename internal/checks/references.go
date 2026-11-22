@@ -166,8 +166,15 @@ func (c *run) checkRoute(o *object) {
 		l.Found = "service ports: " + joinList(sp.description)
 		l.Expected = fmt.Sprintf("%s to have a port named %q, or a target port with that number", svc.ref, port)
 		switch {
-		case sp.names[port] || sp.targets[port]:
+		case sp.names[port] || (portIsNum && sp.targets[port]):
 			l.Message = fmt.Sprintf("%s sends to port %s of %s, which has it.", o.ref, port, svc.ref)
+		case sp.targets[port]:
+			// The name is one of the Service's target ports. That is a name
+			// on the pods, not a Service port name. Whether the router
+			// accepts it has not been checked against a running router.
+			l.Status, l.Reason = links.StatusUnresolved, links.ReasonPortNotDeclared
+			l.Message = fmt.Sprintf("%s sends to the port named %q of %s. That is the name of a target port on the pods, not of a Service port. Whether the router accepts it has not been checked against a running router.", o.ref, port, svc.ref)
+			l.Fix = "Set spec.port.targetPort to the name of a Service port, or to the Service's target port number."
 		case len(sp.description) == 0 && svc.cluster:
 			l.Status, l.Reason = links.StatusUnresolved, links.ReasonDetailsUnknown
 			l.Found = "no ports listed"
@@ -275,9 +282,10 @@ func (c *run) checkBinding(o *object) {
 		field := fmt.Sprintf("subjects[%d].name", i)
 		if ns == "" {
 			if o.gk == kindCRB {
-				c.add(links.Link{Check: "binding-subject", Status: links.StatusSkipped, Reason: links.ReasonInvalid, From: o.ref, Field: field,
+				c.add(links.Link{Check: "binding-subject", Status: links.StatusUnresolved, Reason: links.ReasonInvalid, From: o.ref, Field: field,
 					To:      links.Target{Kind: "ServiceAccount", Name: getString(sm, "name")},
-					Message: fmt.Sprintf("%s names a ServiceAccount without a namespace, so it was not followed. A schema check reports this in full.", o.ref)})
+					Message: fmt.Sprintf("%s names a ServiceAccount without a namespace, so it could not be followed.", o.ref),
+					Fix:     fmt.Sprintf("Set subjects[%d].namespace. A ClusterRoleBinding has no namespace of its own to fall back on.", i)})
 				continue
 			}
 			ns = o.ns

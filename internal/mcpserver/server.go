@@ -33,8 +33,13 @@ How to read results:
 Every check runs unless you narrow it with "checks" or "skipChecks"; list_checks names them. A check that is turned off is listed in "checksSkipped", and the verdict then covers only the checks that ran.
 describe_links returns every link, including the ones that are fine. The server never changes manifests and never contacts a cluster.`
 
-// maxHistory is how many checks are kept for explain_finding.
-const maxHistory = 50
+// maxHistory is how many checks are kept for explain_finding, and
+// maxHistoryLinks how many links those checks may hold between them. The
+// newest check is always kept.
+const (
+	maxHistory      = 50
+	maxHistoryLinks = 20000
+)
 
 // Server holds the MCP tool handlers.
 type Server struct {
@@ -50,6 +55,7 @@ type Server struct {
 type callerHistory struct {
 	results map[string]*checks.Result
 	order   []string
+	links   int
 }
 
 // caller names who made a request: the API key holder over HTTP, or "" over
@@ -80,7 +86,7 @@ func New(a *app.App) (*Server, *mcp.Server) {
 	}, s.checkManifests)
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "check_directory",
-		Description: "Check every manifest file (.yaml, .yml, .json) under a workspace directory as one bundle. Findings are grouped by file and resource. Files that are not Kubernetes manifests are listed as skipped.",
+		Description: "Check every manifest file (.yaml, .yml, .json) under a workspace directory as one bundle. Findings are grouped by file and resource. Files that are not Kubernetes manifests are listed in skippedFiles. A file that could not be read has notRead set there, and the report is then not complete.",
 		Annotations: readOnly,
 	}, s.checkDirectory)
 	mcp.AddTool(srv, &mcp.Tool{
@@ -236,6 +242,9 @@ func (s *Server) run(ctx context.Context, who string, req checks.Request, cluste
 	return res, nil
 }
 
+// remember keeps what explain_finding needs from a check: its links. The
+// manifests themselves are not kept, so no Secret value outlives the call
+// that sent it.
 func (s *Server) remember(who string, res *checks.Result) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -245,9 +254,11 @@ func (s *Server) remember(who string, res *checks.Result) {
 		s.history[who] = h
 	}
 	id := res.Report.CheckID
-	h.results[id] = res
+	h.results[id] = &checks.Result{Report: &links.Report{CheckID: id}, Links: res.Links}
 	h.order = append(h.order, id)
-	for len(h.order) > maxHistory {
+	h.links += len(res.Links)
+	for len(h.order) > 1 && (len(h.order) > maxHistory || h.links > maxHistoryLinks) {
+		h.links -= len(h.results[h.order[0]].Links)
 		delete(h.results, h.order[0])
 		h.order = h.order[1:]
 	}
@@ -358,7 +369,7 @@ func (s *Server) explainFinding(ctx context.Context, req *mcp.CallToolRequest, i
 	}
 	s.mu.Unlock()
 	if !ok {
-		return nil, nil, fmt.Errorf("check %s is no longer available (only the last %d checks of this session are kept); check again and use the new finding id", parts[1], maxHistory)
+		return nil, nil, fmt.Errorf("check %s is no longer available (only the last %d checks of this session are kept, fewer when they are large); check again and use the new finding id", parts[1], maxHistory)
 	}
 	ex, err := res.Explain(in.FindingID)
 	if err != nil {
