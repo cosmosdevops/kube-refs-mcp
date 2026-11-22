@@ -1,0 +1,52 @@
+# Rules for the Kubernetes Gateway API (https://gateway-api.sigs.k8s.io).
+#
+# A reference to another namespace is followed. Whether a ReferenceGrant
+# allows it is not judged.
+checks:
+  - name: gateway-class
+    description: The GatewayClass a Gateway names exists.
+    from: {group: gateway.networking.k8s.io, kind: Gateway}
+    reference:
+      name: spec.gatewayClassName
+      to:
+        group: gateway.networking.k8s.io
+        kind: GatewayClass
+        clusterScoped: [GatewayClass]
+
+  - name: gateway-certificate
+    description: The TLS Secret a Gateway listener names exists.
+    from: {group: gateway.networking.k8s.io, kind: Gateway}
+    reference:
+      each: spec.listeners[].tls.certificateRefs[]
+      name: name
+      namespace: namespace
+      to:
+        kind: Secret
+        kindField: kind
+        groupField: group
+
+  - name: httproute-parent
+    description: The Gateway an HTTPRoute attaches to exists.
+    from: {group: gateway.networking.k8s.io, kind: HTTPRoute}
+    reference:
+      each: spec.parentRefs[]
+      name: name
+      namespace: namespace
+      to:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        kindField: kind
+        groupField: group
+
+  - name: httproute-backend
+    description: The Service an HTTPRoute sends to exists and exposes the port.
+    from: {group: gateway.networking.k8s.io, kind: HTTPRoute}
+    reference:
+      each: spec.rules[].backendRefs[]
+      name: name
+      namespace: namespace
+      port: port
+      to:
+        kind: Service
+        kindField: kind
+        groupField: group

@@ -16,13 +16,28 @@ type Check struct {
 	Kinds []string `json:"kinds"`
 	// Decides says which outcomes are certain and which are left open.
 	Decides string `json:"decides"`
+	// Source is "builtin" for a check that is part of the program, and
+	// "rule" for one an operator added from a rules file.
+	Source string `json:"source"`
+	// File is the rules file a rule came from.
+	File string `json:"file,omitempty"`
 }
+
+// Where a check comes from.
+const (
+	SourceBuiltin = "builtin"
+	SourceRule    = "rule"
+)
 
 const workloads = "Pod, Deployment, StatefulSet, DaemonSet, ReplicaSet, ReplicationController, Job, CronJob, DeploymentConfig, and any kind with a pod template at spec.template"
 
-// registry is every check, in the order they are listed. A link may only
-// carry a name from this table.
-var registry = []Check{
+// builtinChecks is every check that is part of the program, in the order
+// they are listed. A link may only carry the name of a check in registry.
+var builtinChecks = []struct {
+	Name, Description string
+	Kinds             []string
+	Decides           string
+}{
 	{"service-selector", "A Service's selector matches the pod template of a workload.", []string{"Service"},
 		"Unresolved when it matches nothing: matching pods may be in the cluster."},
 	{"service-port", "A Service's target port is a container port of the pods it selects.", []string{"Service"},
@@ -56,6 +71,16 @@ var registry = []Check{
 	{"binding-subject", "A ServiceAccount named as a subject of a binding exists.", []string{"RoleBinding", "ClusterRoleBinding"},
 		"Unresolved when the ServiceAccount is not in the bundle."},
 }
+
+// registry is every check that can run: the built-in ones, then any rules
+// installed from a file. See Install.
+var registry = func() []Check {
+	out := make([]Check, len(builtinChecks))
+	for i, b := range builtinChecks {
+		out[i] = Check{Name: b.Name, Description: b.Description, Kinds: b.Kinds, Decides: b.Decides, Source: SourceBuiltin}
+	}
+	return out
+}()
 
 // List returns every check.
 func List() []Check { return append([]Check(nil), registry...) }

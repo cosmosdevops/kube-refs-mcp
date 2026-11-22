@@ -94,6 +94,7 @@ A finding has:
 | `port_missing` | `broken` | The target does not have the port. For a named Service target port, only with `bundleComplete`. |
 | `selector_mismatch` | `broken` | A workload's selector does not match its own pod template. |
 | `wrong_kind` | `broken` | The reference names a kind that cannot be used there. |
+| `reference_missing` | `broken` | A rule marks the reference as required, and the resource does not set it. |
 | `optional` | `skipped` | The reference is marked optional and the target is absent. |
 | `cluster_provided` | `skipped` | The cluster creates the target itself. |
 | `runtime_labels` | `skipped` | The selector uses a label only running pods have. |

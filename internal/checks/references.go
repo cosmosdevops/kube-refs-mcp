@@ -63,28 +63,34 @@ func (c *run) checkBackend(o *object, b backend) {
 		c.add(l)
 		return
 	}
+	c.add(c.portLink(o, svc, l, b.port, b.portField))
+}
+
+// portLink compares a port a resource asks for with the ports a Service
+// exposes. l is the link that found the Service.
+func (c *run) portLink(o, svc *object, l links.Link, port, portField string) links.Link {
 	sp := portsOfService(svc)
-	l.Field, l.To.Port = b.portField, b.port
-	l.Expected = fmt.Sprintf("%s to expose port %s", svc.ref, b.port)
+	l.Field, l.To.Port = portField, port
+	l.Expected = fmt.Sprintf("%s to expose port %s", svc.ref, port)
 	l.Candidates = sp.description
 	l.Found = "service ports: " + joinList(sp.description)
 	switch {
-	case sp.numbers[b.port] || sp.names[b.port]:
-		l.Message = fmt.Sprintf("%s sends to port %s of %s, which exposes it.", o.ref, b.port, svc.ref)
+	case sp.numbers[port] || sp.names[port]:
+		l.Message = fmt.Sprintf("%s sends to port %s of %s, which exposes it.", o.ref, port, svc.ref)
 	case len(sp.description) == 0 && svc.cluster:
 		l.Status, l.Reason = links.StatusUnresolved, links.ReasonDetailsUnknown
 		l.Found = "no ports listed"
-		l.Message = fmt.Sprintf("%s sends to port %s of %s, which was supplied without its ports, so this cannot be decided.", o.ref, b.port, svc.ref)
+		l.Message = fmt.Sprintf("%s sends to port %s of %s, which was supplied without its ports, so this cannot be decided.", o.ref, port, svc.ref)
 		l.Fix = "Include spec.ports in the copy of the Service passed in clusterObjects."
 	default:
 		l.Status, l.Reason = links.StatusBroken, links.ReasonPortMissing
-		l.Message = fmt.Sprintf("%s sends to port %s of %s, which does not expose that port.", o.ref, b.port, svc.ref)
-		l.Fix = fmt.Sprintf("Change %s to a port the Service exposes, or add the port to the Service.", b.portField)
+		l.Message = fmt.Sprintf("%s sends to port %s of %s, which does not expose that port.", o.ref, port, svc.ref)
+		l.Fix = fmt.Sprintf("Change %s to a port the Service exposes, or add the port to the Service.", portField)
 		if len(sp.description) > 0 {
 			l.ClosestMatch = fmt.Sprintf("%s exposes %s", svc.ref, joinList(sp.description))
 		}
 	}
-	c.add(l)
+	return l
 }
 
 // checkIngress checks every backend of an Ingress, and its TLS Secrets.

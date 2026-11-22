@@ -48,7 +48,8 @@ cmd/kube-refs-mcp      main
 internal/app           limits, time limit, version
 internal/manifests     parsing, workspace file access
 internal/links         the result model: link, status, reason, report
-internal/checks        the checks
+internal/checks        the checks, and the rules that add to them
+rules                  rule files for common operators
 internal/mcpserver     MCP tools, HTTP mode, API keys
 internal/cli           the command line
 internal/tools         the licence collector used by the image build
@@ -62,6 +63,21 @@ The checks are listed in one table, `registry` in
 `internal/checks/registry.go`. A second table, `runners`, says which
 function produces which checks. The dispatch, the `checks` command, the
 `list_checks` tool and the check selection all read from these tables.
+
+## Rules
+
+A rule is a check an operator adds from a file. It names a kind, and says
+which field of it holds the name of another resource, or a selector.
+
+Rules are data, not code. A rule becomes a row in the same `registry` and
+`runners` tables as a built-in check, with a function that reads the field
+and hands the reference to the same resolving code. So the status of a
+rule's link is worked out by the program, never by the rule. A rule cannot
+claim a pass, and it cannot express an opinion about a manifest.
+
+Rules are installed once, at start-up, before any check runs. A file that is
+wrong stops the program. Only the operator supplies rules: a request cannot
+carry them.
 
 ## How a check runs
 

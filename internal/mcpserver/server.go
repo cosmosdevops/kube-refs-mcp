@@ -30,7 +30,7 @@ How to read results:
 - "broken": certain. Both ends are in the bundle and they do not fit.
 - "unresolved": the target is not in the bundle. It may exist in the cluster, so this is not a failure, and it is NOT a pass. If the object does exist in the cluster, pass it in clusterObjects. If the bundle is everything, set bundleComplete and a missing target counts as broken.
 - status "unknown" or complete=false: nothing is broken, but some links are unresolved.
-Every check runs unless you narrow it with "checks" or "skipChecks"; list_checks names them. A check that is turned off is listed in "checksSkipped", and the verdict then covers only the checks that ran.
+Every check runs unless you narrow it with "checks" or "skipChecks"; list_checks names them, including any the operator added for custom kinds. A check that is turned off is listed in "checksSkipped", and the verdict then covers only the checks that ran.
 describe_links returns every link, including the ones that are fine. The server never changes manifests and never contacts a cluster.`
 
 // maxHistory is how many checks are kept for explain_finding, and

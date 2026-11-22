@@ -59,6 +59,9 @@ const (
 	ReasonSelectorMismatch Reason = "selector_mismatch"
 	// ReasonWrongKind: the reference names a kind that cannot be used there.
 	ReasonWrongKind Reason = "wrong_kind"
+	// ReasonReferenceMissing: a rule says the reference must be there, and
+	// the resource does not set it.
+	ReasonReferenceMissing Reason = "reference_missing"
 	// ReasonOptional: the reference is marked optional and the target, or
 	// its key, is absent.
 	ReasonOptional Reason = "optional"

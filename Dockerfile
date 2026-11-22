@@ -20,6 +20,9 @@ RUN go run ./internal/tools/licenses -binary /kube-refs-mcp -out /licenses
 FROM scratch
 COPY --from=build /kube-refs-mcp /kube-refs-mcp
 COPY --from=build /licenses /licenses
+# The rule library for common operators. Turn one on with --rules, for
+# example --rules /rules/gateway-api.yaml. None is on by default.
+COPY rules /rules
 # Runs as an unprivileged user. Files it must read (the API keys, and any
 # workspace that is mounted in) need to be readable by this ID; see
 # deploy/compose.yaml.

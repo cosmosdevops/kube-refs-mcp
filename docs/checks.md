@@ -250,7 +250,17 @@ Some checks share work. `service-port` compares a Service's ports with the
 pods its selector found. Turning off `service-selector` hides the selector
 findings, and `service-port` still runs.
 
+## Checks for your own kinds
+
+The checks above are built in. A rules file adds checks for custom
+resources, without changing the program. `kube-refs-mcp checks` and
+`list_checks` show them with `source: rule`, and they are turned off the
+same way as any other check. See [rules.md](rules.md).
+
 ## Adding a check
+
+A reference that a rule can describe does not need code. Write a rule. The
+steps below are for a reference that needs logic of its own.
 
 The checks are listed in one table, in `internal/checks/registry.go`.
 

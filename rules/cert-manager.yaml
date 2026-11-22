@@ -1,0 +1,18 @@
+# Rules for cert-manager (https://cert-manager.io).
+#
+#   kube-refs-mcp check --rules rules/cert-manager.yaml -f manifests.yaml
+checks:
+  - name: certificate-issuer
+    description: The issuer a Certificate names exists.
+    from: {group: cert-manager.io, kind: Certificate}
+    reference:
+      name: spec.issuerRef.name
+      # A Certificate cannot be issued without an issuer.
+      required: true
+      to:
+        group: cert-manager.io
+        kind: Issuer
+        # issuerRef.kind may say ClusterIssuer, which has no namespace.
+        kindField: spec.issuerRef.kind
+        groupField: spec.issuerRef.group
+        clusterScoped: [ClusterIssuer]

@@ -1,4 +1,5 @@
-# Only the Go sources and the licence files go into the build.
+# Only the Go sources, the licence files and the rule library go into the
+# build.
 *
 !LICENSE
 !NOTICE
@@ -6,4 +7,5 @@
 !go.sum
 !cmd
 !internal
+!rules
 **/*_test.go

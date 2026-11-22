@@ -287,8 +287,22 @@ var clusterScoped = map[string]bool{
 	"ClusterIssuer": true, "FlowSchema": true, "PriorityLevelConfiguration": true,
 }
 
-// IsClusterScoped reports whether kind is a well-known cluster-scoped kind.
-func IsClusterScoped(kind string) bool { return clusterScoped[kind] }
+// extraClusterScoped holds kinds that rules files say have no namespace.
+var extraClusterScoped = map[string]bool{}
+
+// SetExtraClusterScoped replaces the kinds that are cluster-scoped besides
+// the well-known ones. It is meant for start-up, when rules are installed.
+func SetExtraClusterScoped(kinds []string) {
+	extra := make(map[string]bool, len(kinds))
+	for _, k := range kinds {
+		extra[k] = true
+	}
+	extraClusterScoped = extra
+}
+
+// IsClusterScoped reports whether kind is a well-known cluster-scoped kind,
+// or one a rules file named as such.
+func IsClusterScoped(kind string) bool { return clusterScoped[kind] || extraClusterScoped[kind] }
 
 // ApplyDefaultNamespace returns copies of the resources where namespaced
 // resources without a namespace are placed in ns. The input is not modified.

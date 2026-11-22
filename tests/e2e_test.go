@@ -296,6 +296,7 @@ type checkList struct {
 	Checks []struct {
 		Name, Description, Decides string
 		Kinds                      []string
+		Source, File               string
 	} `json:"checks"`
 	SkippedByServer []string `json:"skippedByServer"`
 }
@@ -583,6 +584,12 @@ func TestCLI(t *testing.T) {
 		{"one check", []string{"check", "--dir", "examples/manifests/broken", "--check", "workload-selector"}, 0, "Verdict:   PASS"},
 		{"mistyped check", []string{"check", "--dir", "examples/manifests/broken", "--skip-check", "confgimap"}, 3, "no check is named"},
 		{"list checks", []string{"checks"}, 0, "service-selector"},
+		{"rules", []string{"check", "--rules", "rules/gateway-api.yaml", "-f", "examples/rules/gateway.yaml"}, 1, "BROKEN      httproute-backend -> Service/shop/web port 8080"},
+		{"no rules", []string{"check", "-f", "examples/rules/gateway.yaml"}, 0, "Verdict:   PASS"},
+		{"rules directory", []string{"checks", "--rules", "rules"}, 0, "rule from: rules/cert-manager.yaml"},
+		{"skip a rule", []string{"check", "--rules", "rules/gateway-api.yaml", "--skip-check", "httproute-*", "-f", "examples/rules/gateway.yaml"}, 0, "2 check(s) were turned off"},
+		{"missing rules file", []string{"check", "--rules", "rules/nope.yaml", "-f", "examples/rules/gateway.yaml"}, 3, "reading rules"},
+		{"serve with missing rules", []string{"serve", "--rules", "rules/nope.yaml"}, 3, "reading rules"},
 		{"serve with a mistyped check", []string{"serve", "--skip-check", "nope"}, 3, "no check is named"},
 		{"no input", []string{"check"}, 3, "give at least one --file or a --dir"},
 		{"missing file", []string{"check", "-f", "nope.yaml"}, 3, "no such file"},
@@ -616,5 +623,58 @@ func TestCLI(t *testing.T) {
 	}
 	if code, out := runCLI(t, "", "serve", "--http", "127.0.0.1:0"); code != 3 || !strings.Contains(out, "--keys") {
 		t.Errorf("serve --http without keys: %d %s", code, out)
+	}
+}
+
+// A server started with --rules runs the extra checks for every caller, and
+// lists them apart from the built-in ones.
+func TestRulesOverMCP(t *testing.T) {
+	s := connect(t, "--rules", filepath.Join(repoRoot, "rules", "gateway-api.yaml"))
+
+	var list checkList
+	if isErr, text := call(t, s, "list_checks", nil, &list); isErr {
+		t.Fatal(text)
+	}
+	sources := map[string]string{}
+	for _, c := range list.Checks {
+		sources[c.Name] = c.Source
+		if c.Source == "rule" && (c.File == "" || c.Description == "" || c.Decides == "") {
+			t.Errorf("listed rule lacks detail: %+v", c)
+		}
+	}
+	if sources["service-selector"] != "builtin" || sources["httproute-backend"] != "rule" || sources["gateway-class"] != "rule" {
+		t.Errorf("sources = %v", sources)
+	}
+
+	bundle := read(t, example("rules", "gateway.yaml"))
+	var rep report
+	if isErr, text := call(t, s, "check_manifests", map[string]any{"manifests": bundle}, &rep); isErr {
+		t.Fatal(text)
+	}
+	if rep.Status != "fail" || rep.Summary.Broken != 1 || rep.Summary.Unresolved != 1 {
+		t.Fatalf("report = %+v", rep.Summary)
+	}
+	checksOf := map[string]string{}
+	for _, f := range rep.Findings {
+		checksOf[f.Check] = f.Status
+	}
+	if checksOf["httproute-backend"] != "broken" || checksOf["httproute-parent"] != "unresolved" {
+		t.Errorf("findings = %v", checksOf)
+	}
+	if !strings.Contains(strings.Join(rep.ChecksRun, ","), "httproute-backend") {
+		t.Errorf("checksRun = %v", rep.ChecksRun)
+	}
+	// A caller can turn a rule off for one call, like any check.
+	if isErr, text := call(t, s, "check_manifests", map[string]any{"manifests": bundle, "skipChecks": []string{"httproute-*"}}, &rep); isErr {
+		t.Fatal(text)
+	}
+	if rep.Summary.Broken != 0 || !strings.Contains(strings.Join(rep.ChecksSkipped, ","), "httproute-backend") {
+		t.Errorf("report with the rules off = %+v skipped %v", rep.Summary, rep.ChecksSkipped)
+	}
+
+	// A server with no rules knows nothing about the kinds they cover.
+	plain := connect(t)
+	if isErr, text := call(t, plain, "check_manifests", map[string]any{"manifests": bundle}, &rep); isErr || rep.Status != "pass" {
+		t.Errorf("without rules: %v %s %+v", isErr, text, rep.Summary)
 	}
 }

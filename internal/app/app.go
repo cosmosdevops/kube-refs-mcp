@@ -36,6 +36,8 @@ type Options struct {
 	Timeout          time.Duration
 	// SkipChecks names checks that are turned off for every request.
 	SkipChecks []string
+	// Rules are files and directories of extra checks. See checks.Rule.
+	Rules []string
 }
 
 // App is the assembled application core.
@@ -51,6 +53,16 @@ func New(opts Options) (*App, error) {
 	}
 	if opts.Timeout <= 0 {
 		return nil, errors.New("the timeout must be above 0")
+	}
+	// Rules are read before the check names are settled, so that a rule
+	// can be turned off like any other check. A file that is wrong stops
+	// the program here: a rule is never left out quietly.
+	rules, err := checks.LoadRules(opts.Rules)
+	if err != nil {
+		return nil, err
+	}
+	if err := checks.Install(rules); err != nil {
+		return nil, err
 	}
 	// A mistyped check name stops the program at start-up, not later.
 	sel, err := checks.Select(nil, opts.SkipChecks)

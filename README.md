@@ -136,6 +136,22 @@ no such directory, callers send manifests inline. There is no config file.
 Send everything that is deployed together in one call. A reference can only
 be followed to a resource that is in the same call.
 
+## Checks for your own kinds
+
+The built-in checks cover core Kubernetes and OpenShift. A rules file teaches
+the tool how your custom resources refer to each other, for example that an
+`HTTPRoute` names a `Service`.
+
+```bash
+kube-refs-mcp check --rules rules/gateway-api.yaml --dir ./k8s
+```
+
+[rules](rules) has rules for cert-manager, the Gateway API, the Prometheus
+Operator, External Secrets and KEDA. A rule only says where a reference is.
+The tool decides the result as it does for its own checks, so a rule cannot
+report a pass that was not established.
+[docs/rules.md](docs/rules.md) shows how to write one.
+
 ## Command line
 
 The CLI runs the same code as the MCP server.
@@ -147,6 +163,7 @@ kube-refs-mcp check --dir ./k8s --complete
 kube-refs-mcp check --dir ./k8s --cluster-objects existing.yaml -o json
 cat app.yaml | kube-refs-mcp check -f - --explain
 kube-refs-mcp check --dir ./k8s --skip-check networkpolicy-selector
+kube-refs-mcp check --dir ./k8s --rules rules/cert-manager.yaml
 kube-refs-mcp links --dir ./k8s
 kube-refs-mcp checks
 ```
@@ -197,7 +214,8 @@ the files are in [deploy](deploy).
   own pod selector is.
 - Custom resources are handled in two generic ways only: a kind with a
   `spec.template` pod template is treated as a workload, and an autoscaler
-  can target any kind.
+  can target any kind. Other references of a custom kind are followed only
+  when a rule describes them.
 
 [docs/checks.md](docs/checks.md#what-is-not-checked) has the full list.
 
@@ -206,6 +224,7 @@ the files are in [deploy](deploy).
 | Page | Covers |
 | --- | --- |
 | [checks.md](docs/checks.md) | Every check, what it decides, turning checks off, adding one |
+| [rules.md](docs/rules.md) | Checks for your own kinds, and the rule library |
 | [results.md](docs/results.md) | The report, the options, reasons, exit codes |
 | [hosting.md](docs/hosting.md) | HTTP mode, API keys, systemd, Docker |
 | [design.md](docs/design.md) | How it is built and why |

@@ -80,7 +80,8 @@ func newRoot(stdin io.Reader) *cobra.Command {
 	pf.IntVar(&g.opts.MaxResources, "max-resources", app.DefaultMaxResources, "most resources accepted in one check")
 	pf.IntVar(&g.opts.MaxFiles, "max-files", app.DefaultMaxFiles, "most manifest files read from one directory")
 	pf.DurationVar(&g.opts.Timeout, "timeout", app.DefaultTimeout, "longest one check may run")
-	root.AddCommand(serveCmd(g), newKeyCmd(), checkHealthCmd(), checkCmd(g, stdin), linksCmd(g, stdin), checksCmd(), versionCmd())
+	pf.StringArrayVar(&g.opts.Rules, "rules", nil, "file or directory of extra checks for your own kinds of resource (repeatable). See docs/rules.md")
+	root.AddCommand(serveCmd(g), newKeyCmd(), checkHealthCmd(), checkCmd(g, stdin), linksCmd(g, stdin), checksCmd(g), versionCmd())
 	return root
 }
 
@@ -91,10 +92,14 @@ func versionCmd() *cobra.Command {
 	}}
 }
 
-// checksCmd lists the checks in this build.
-func checksCmd() *cobra.Command {
+// checksCmd lists the checks in this build, and any added with --rules.
+func checksCmd(g *globals) *cobra.Command {
 	var output string
 	cmd := &cobra.Command{Use: "checks", Short: "List the checks and what each one decides", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		// Building the app reads the rules files.
+		if _, err := g.app(); err != nil {
+			return err
+		}
 		out := cmd.OutOrStdout()
 		switch output {
 		case "json":
@@ -102,6 +107,9 @@ func checksCmd() *cobra.Command {
 		case "text":
 			for _, c := range checks.List() {
 				fmt.Fprintf(out, "%s\n  %s\n  %s\n  kinds: %s\n", c.Name, c.Description, c.Decides, strings.Join(c.Kinds, ", "))
+				if c.Source == checks.SourceRule {
+					fmt.Fprintf(out, "  rule from: %s\n", c.File)
+				}
 			}
 			return nil
 		}

@@ -1,0 +1,19 @@
+# Rules for the Prometheus Operator (https://prometheus-operator.dev).
+#
+# A monitor with a namespaceSelector looks in other namespaces, which these
+# rules do not follow. Such a monitor is skipped.
+checks:
+  - name: servicemonitor-selector
+    description: A ServiceMonitor's selector matches a Service.
+    from: {group: monitoring.coreos.com, kind: ServiceMonitor}
+    unlessSet: spec.namespaceSelector
+    selector:
+      field: spec.selector
+      matches: {kind: Service}
+
+  - name: podmonitor-selector
+    description: A PodMonitor's selector matches the pod template of a workload.
+    from: {group: monitoring.coreos.com, kind: PodMonitor}
+    unlessSet: spec.namespaceSelector
+    selector:
+      field: spec.selector

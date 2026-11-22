@@ -1,0 +1,55 @@
+# A bundle for trying the Gateway API rules:
+#
+#   kube-refs-mcp check --rules rules/gateway-api.yaml -f examples/rules/gateway.yaml
+#
+# The second backend asks for a port the Service does not expose, and the
+# route attaches to a Gateway that is not in the bundle.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: shop
+  namespace: shop
+spec:
+  parentRefs:
+    - name: edge
+      namespace: infra
+  rules:
+    - backendRefs:
+        - name: web
+          port: 80
+        - name: web
+          port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: shop
+spec:
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: shop
+spec:
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: registry.example.com/shop/web:1.0.0
+          ports:
+            - name: http
+              containerPort: 8080

@@ -1,0 +1,14 @@
+# Rules for KEDA (https://keda.sh).
+checks:
+  - name: scaledobject-target
+    description: The workload a ScaledObject scales exists.
+    from: {group: keda.sh, kind: ScaledObject}
+    reference:
+      name: spec.scaleTargetRef.name
+      required: true
+      to:
+        # KEDA scales a Deployment unless the reference says otherwise.
+        group: apps
+        kind: Deployment
+        kindField: spec.scaleTargetRef.kind
+        apiVersionField: spec.scaleTargetRef.apiVersion
