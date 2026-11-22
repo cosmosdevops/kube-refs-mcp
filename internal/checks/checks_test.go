@@ -695,6 +695,25 @@ func TestDuplicatesAreNoted(t *testing.T) {
 	if !found {
 		t.Errorf("notes = %v", res.Report.Notes)
 	}
+
+	// Two copies with different keys: which one the cluster ends up with
+	// is not known, so a key is neither ok nor broken. Both orders.
+	with := "\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: a}\ndata: {k: v}\n"
+	without := "\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: a}\ndata: {other: v}\n"
+	pod := deployment("web", "", "{app: web}", "env:\n  - name: X\n    valueFrom: {configMapKeyRef: {name: a, key: k}}\n", "")
+	for _, bundle := range []string{with + without + pod, without + with + pod} {
+		res := check(t, bundle, complete)
+		expect(t, one(t, res, "configmap"), links.StatusUnresolved, links.ReasonDetailsUnknown)
+		if res.Report.Status != links.VerdictUnknown {
+			t.Errorf("status = %s", res.Report.Status)
+		}
+	}
+	// Two copies that are the same leave nothing in doubt.
+	expect(t, one(t, check(t, with+with+pod), "configmap"), links.StatusOK, "")
+	// The same holds for the ports of a Service an Ingress sends to.
+	ing := "\n---\napiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata: {name: i}\nspec:\n  defaultBackend: {service: {name: s, port: {number: 80}}}\n"
+	res = check(t, service("s", "", "", "[{port: 80}]")+service("s", "", "", "[{port: 8080}]")+ing)
+	expect(t, one(t, res, "ingress-backend"), links.StatusUnresolved, links.ReasonDetailsUnknown)
 }
 
 func TestRunStopsWhenOutOfTime(t *testing.T) {

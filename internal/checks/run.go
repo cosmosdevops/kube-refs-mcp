@@ -12,6 +12,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -111,10 +112,13 @@ type run struct {
 	sel     Selection
 	objects []*object
 	// byName finds an object by kind, namespace and name.
-	byName    map[gk]map[string]map[string]*object
-	templates []*podTemplate
-	links     []links.Link
-	notes     []string
+	byName map[gk]map[string]map[string]*object
+	// conflicting holds the objects that are in the bundle more than once
+	// with different content. See add.
+	conflicting map[string]bool
+	templates   []*podTemplate
+	links       []links.Link
+	notes       []string
 }
 
 const clusterSource = "clusterObjects"
@@ -257,7 +261,15 @@ func (c *run) index(r manifests.Resource, cluster bool) *object {
 		byNS[o.ns] = map[string]*object{}
 	}
 	if old := byNS[o.ns][o.name]; old != nil && !old.cluster && !cluster {
-		c.notef("%s is in the bundle more than once (%s and %s). The later one was used.", o.ref, old.ref.Source, o.ref.Source)
+		if reflect.DeepEqual(old.res.Object, o.res.Object) {
+			c.notef("%s is in the bundle more than once (%s and %s), with the same content.", o.ref, old.ref.Source, o.ref.Source)
+		} else {
+			if c.conflicting == nil {
+				c.conflicting = map[string]bool{}
+			}
+			c.conflicting[conflictKey(o.gk.Kind, o.ns, o.name)] = true
+			c.notef("%s is in the bundle more than once (%s and %s), with different content. It is not known which one the cluster ends up with, so its keys and ports were not judged.", o.ref, old.ref.Source, o.ref.Source)
+		}
 	}
 	// An object in the bundle wins over the same object given as context.
 	if old := byNS[o.ns][o.name]; old == nil || old.cluster || !cluster {
@@ -350,6 +362,16 @@ func (c *run) add(l links.Link) {
 			Message: fmt.Sprintf("%s has a reference with a name, label or port far longer than Kubernetes allows, so it was not followed.", l.From),
 			Fix:     "Shorten the name or label. Kubernetes allows at most 253 characters for a name and 63 for a label value."}
 	}
+	// A key or a port of an object that is in the bundle twice, with
+	// different content: the answer depends on which copy is applied last.
+	// service-port is left alone, because it judges each copy by itself.
+	if (l.To.Key != "" || l.To.Port != "") && l.Check != "service-port" && (l.Status == links.StatusOK || l.Status == links.StatusBroken) &&
+		c.conflicting[conflictKey(l.To.Kind, l.To.Namespace, l.To.Name)] {
+		l.Status, l.Reason = links.StatusUnresolved, links.ReasonDetailsUnknown
+		l.ClosestMatch = ""
+		l.Message = fmt.Sprintf("%s refers to %s, which is in the bundle more than once with different content. It is not known which copy the cluster ends up with, so this cannot be decided.", l.From, l.To)
+		l.Fix = fmt.Sprintf("Keep one copy of %s %q in the bundle.", l.To.Kind, l.To.Name)
+	}
 	l.Expected, l.Found = clip(l.Expected, maxDetail), clip(l.Found, maxDetail)
 	for i := range l.Candidates {
 		l.Candidates[i] = clip(l.Candidates[i], maxDetail)
@@ -360,6 +382,8 @@ func (c *run) add(l links.Link) {
 	}
 	c.links = append(c.links, l)
 }
+
+func conflictKey(kind, ns, name string) string { return kind + "|" + ns + "|" + name }
 
 // mixedNamespaces reports whether exactly one of two namespaces is unset.
 // The two might then still be the same namespace once applied, so a lookup

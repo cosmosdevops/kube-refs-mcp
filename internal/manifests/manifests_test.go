@@ -185,7 +185,7 @@ func TestLoadDirKeepsTheRestOfAFile(t *testing.T) {
 	if len(rs) != 2 || rs[0].Kind() != "Pod" || rs[1].Kind() != "Service" {
 		t.Errorf("resources = %+v", rs)
 	}
-	if len(skipped) != 2 || !skipped[0].NotRead || skipped[1].NotRead || !strings.Contains(skipped[1].Reason, "Kustomization") {
+	if len(skipped) != 2 || !skipped[0].NotRead || skipped[1].NotRead || skipped[1].Reason != "document 1: Kustomization has no metadata.name, so it is not a deployable Kubernetes resource" || strings.Contains(skipped[0].Reason, "big.yaml") {
 		t.Errorf("skipped = %+v", skipped)
 	}
 	// Named directly, the same file is still refused as a whole.

@@ -148,6 +148,22 @@ func (w *Workspace) readReal(real string, lim Limits) ([]byte, error) {
 	return os.ReadFile(real)
 }
 
+// withoutPath removes the file's own path from the start of a reason. The
+// path is given beside the reason, so it need not be said twice.
+// "a.yaml#1: X" becomes "document 1: X", and "a.yaml: X" becomes "X".
+func withoutPath(reason, path string) string {
+	if rest, ok := strings.CutPrefix(reason, path+"#"); ok {
+		return "document " + rest
+	}
+	if rest, ok := strings.CutPrefix(reason, path+": "); ok {
+		return rest
+	}
+	if rest, ok := strings.CutPrefix(reason, path+" "); ok {
+		return rest
+	}
+	return reason
+}
+
 // DirLimits bounds a directory walk.
 type DirLimits struct {
 	Limits
@@ -211,16 +227,19 @@ func (w *Workspace) LoadDir(dir string, lim DirLimits) ([]Resource, []links.Skip
 		shown := w.Display(f)
 		data, err := w.readReal(f, lim.Limits)
 		if err != nil {
-			skipped = append(skipped, links.SkippedFile{Path: shown, Reason: err.Error(), NotRead: true})
+			skipped = append(skipped, links.SkippedFile{Path: shown, Reason: withoutPath(err.Error(), shown), NotRead: true})
 			continue
 		}
 		rs, notResources, err := ParseLenient(data, shown, lim.Limits)
 		if err != nil {
-			skipped = append(skipped, links.SkippedFile{Path: shown, Reason: err.Error(), NotRead: true})
+			skipped = append(skipped, links.SkippedFile{Path: shown, Reason: withoutPath(err.Error(), shown), NotRead: true})
 			continue
 		}
 		switch {
 		case len(notResources) > 0:
+			for i := range notResources {
+				notResources[i] = withoutPath(notResources[i], shown)
+			}
 			skipped = append(skipped, links.SkippedFile{Path: shown, Reason: strings.Join(notResources, "; ")})
 		case len(rs) == 0:
 			skipped = append(skipped, links.SkippedFile{Path: shown, Reason: "no Kubernetes resources found"})

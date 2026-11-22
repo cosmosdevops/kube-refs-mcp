@@ -274,5 +274,7 @@ the table with this page, so the three cannot drift apart.
 - PersistentVolumeClaims that a StatefulSet makes from
   `volumeClaimTemplates`.
 - Objects made by operators or admission webhooks.
-- Duplicate resources. They are mentioned in the report's notes, and the
-  later one is used.
+- Duplicate resources are not treated as a mistake. They are mentioned in
+  the report's notes. When two copies differ, it is not known which one the
+  cluster ends up with, so a reference to a key or a port of that object is
+  `unresolved` with reason `details_unknown`.
